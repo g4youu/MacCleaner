@@ -1,0 +1,535 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self';"/>
+<title>MacCleaner</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box;-webkit-font-smoothing:antialiased}
+:root{
+  --bg:#0d0d14;--sidebar:#111118;--card:#16161f;--card2:#1c1c28;
+  --border:rgba(255,255,255,0.07);--accent:#5b8af5;--accent2:#a855f7;
+  --accent3:#22d3b8;--danger:#ef4444;--text:#e8e8f0;
+  --muted:#6b6b80;--success:#22c55e;--warn:#eab308;
+}
+html,body{height:100%;overflow:hidden;background:var(--bg);color:var(--text)}
+body{font-family:-apple-system,'SF Pro Display','Helvetica Neue',sans-serif}
+.app{display:flex;height:100vh}
+.sidebar{width:220px;min-width:220px;background:var(--sidebar);border-right:1px solid var(--border);
+  display:flex;flex-direction:column;padding:0 12px 16px;-webkit-app-region:drag}
+.sidebar *{-webkit-app-region:no-drag}
+.logo{display:flex;align-items:center;gap:10px;padding:44px 12px 18px;border-bottom:1px solid var(--border);margin-bottom:12px}
+.logo-icon{width:34px;height:34px;background:linear-gradient(135deg,var(--accent),var(--accent2));
+  border-radius:9px;display:flex;align-items:center;justify-content:center;font-size:16px;
+  box-shadow:0 4px 14px rgba(91,138,245,0.4);flex-shrink:0}
+.logo-name{font-size:15px;font-weight:700;letter-spacing:-0.3px}
+.logo-sub{font-size:10px;color:var(--muted)}
+.nav-label{font-size:10px;font-weight:600;color:var(--muted);letter-spacing:0.8px;text-transform:uppercase;padding:10px 12px 4px}
+.nav-item{display:flex;align-items:center;gap:9px;padding:9px 12px;border-radius:8px;cursor:pointer;
+  font-size:13.5px;color:var(--muted);transition:all 0.13s;border:1px solid transparent;user-select:none}
+.nav-item:hover{color:var(--text);background:rgba(255,255,255,0.05)}
+.nav-item.active{background:rgba(91,138,245,0.12);border-color:rgba(91,138,245,0.2);color:var(--accent);font-weight:500}
+.nav-icon{width:18px;text-align:center;font-size:14px}
+.sidebar-footer{margin-top:auto;padding-top:12px;border-top:1px solid var(--border)}
+.status-row{display:flex;align-items:center;gap:6px;padding:8px 12px;font-size:11px;color:var(--muted)}
+.dot{width:6px;height:6px;border-radius:50%;background:var(--success);animation:pulse 2s ease infinite;flex-shrink:0}
+.main{flex:1;overflow-y:auto;padding:28px 32px;scrollbar-width:thin;scrollbar-color:var(--border) transparent}
+.main::-webkit-scrollbar{width:5px}
+.main::-webkit-scrollbar-thumb{background:var(--border);border-radius:3px}
+.page{display:none;animation:fadeIn 0.2s ease}
+.page.active{display:block}
+.page-header{display:flex;align-items:flex-start;justify-content:space-between;margin-bottom:24px}
+.page-title{font-size:26px;font-weight:700;letter-spacing:-0.5px}
+.page-sub{font-size:13px;color:var(--muted);margin-top:3px}
+.header-actions{display:flex;gap:8px;align-items:center}
+.btn{display:inline-flex;align-items:center;gap:7px;padding:9px 18px;border-radius:9px;
+  font-size:13px;font-weight:500;cursor:pointer;border:none;transition:all 0.15s;font-family:inherit;white-space:nowrap}
+.btn:disabled{opacity:0.5;cursor:not-allowed}
+.btn-primary{background:linear-gradient(135deg,var(--accent),#7b6ef6);color:#fff;box-shadow:0 4px 14px rgba(91,138,245,0.3)}
+.btn-primary:not(:disabled):hover{transform:translateY(-1px);box-shadow:0 6px 18px rgba(91,138,245,0.4)}
+.btn-ghost{background:var(--card2);color:var(--text);border:1px solid var(--border)}
+.btn-ghost:not(:disabled):hover{background:var(--card);border-color:rgba(255,255,255,0.12)}
+.btn-danger{background:rgba(239,68,68,0.1);color:var(--danger);border:1px solid rgba(239,68,68,0.2)}
+.btn-danger:not(:disabled):hover{background:rgba(239,68,68,0.18)}
+.btn-sm{padding:6px 12px;font-size:12px;border-radius:7px}
+.card{background:var(--card);border:1px solid var(--border);border-radius:14px;padding:20px;margin-bottom:16px}
+.card:last-child{margin-bottom:0}
+.card-title{font-size:11px;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:0.5px;margin-bottom:14px}
+.grid-2{display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:16px}
+.grid-3{display:grid;grid-template-columns:1fr 1fr 1fr;gap:16px;margin-bottom:16px}
+.bar-wrap{height:6px;background:var(--card2);border-radius:3px;overflow:hidden}
+.bar-fill{height:100%;border-radius:3px;transition:width 0.7s ease}
+.gauge-wrap{position:relative;display:inline-block}
+.gauge-text{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center}
+.gauge-pct{font-size:28px;font-weight:800;letter-spacing:-1px;line-height:1}
+.gauge-label{font-size:10px;color:var(--muted);margin-top:2px}
+.app-row{display:flex;align-items:center;gap:12px;padding:11px 0;border-bottom:1px solid var(--border)}
+.app-row:last-child{border-bottom:none}
+.app-icon{width:38px;height:38px;border-radius:9px;display:flex;align-items:center;justify-content:center;font-size:20px;flex-shrink:0}
+.app-info{flex:1;min-width:0}
+.app-name{font-size:13.5px;font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.app-meta{font-size:11px;color:var(--muted);margin-top:2px;display:flex;align-items:center;gap:6px;flex-wrap:wrap}
+.tag{display:inline-flex;align-items:center;font-size:11px;font-weight:500;padding:2px 8px;border-radius:20px}
+.toggle{width:38px;height:22px;border-radius:11px;background:var(--card2);border:1px solid var(--border);
+  cursor:pointer;position:relative;transition:all 0.2s;flex-shrink:0}
+.toggle.on{background:var(--accent);border-color:var(--accent)}
+.toggle::after{content:'';position:absolute;width:16px;height:16px;background:#fff;border-radius:50%;
+  top:2px;left:2px;transition:transform 0.2s;box-shadow:0 1px 3px rgba(0,0,0,0.3)}
+.toggle.on::after{transform:translateX(16px)}
+.notice{border-radius:12px;padding:14px 16px;margin-bottom:16px;display:flex;align-items:center;gap:12px;animation:slideIn 0.25s ease}
+.notice.success{background:rgba(34,197,94,0.07);border:1px solid rgba(34,197,94,0.18)}
+.notice.error{background:rgba(239,68,68,0.07);border:1px solid rgba(239,68,68,0.18)}
+.skel{background:linear-gradient(90deg,var(--card2) 25%,rgba(255,255,255,0.04) 50%,var(--card2) 75%);
+  background-size:200% 100%;animation:shimmer 1.4s infinite;border-radius:6px}
+.action-grid{display:grid;grid-template-columns:repeat(5,1fr);gap:10px}
+.action-card{background:var(--card2);border:1px solid var(--border);border-radius:12px;
+  padding:16px 12px;text-align:center;cursor:pointer;transition:all 0.15s;user-select:none}
+.action-card:hover{background:var(--card);border-color:rgba(255,255,255,0.12);transform:translateY(-1px)}
+.action-icon{font-size:24px;margin-bottom:6px}
+.action-label{font-size:11px;font-weight:500;color:var(--muted)}
+@keyframes spin{to{transform:rotate(360deg)}}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:0.4}}
+@keyframes fadeIn{from{opacity:0}to{opacity:1}}
+@keyframes slideIn{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:translateY(0)}}
+@keyframes shimmer{0%{background-position:200% 0}100%{background-position:-200% 0}}
+.spin{display:inline-block;animation:spin 1s linear infinite}
+.empty{text-align:center;padding:40px;color:var(--muted)}
+.monospace{font-family:'SF Mono',Menlo,monospace;font-size:12px}
+</style>
+</head>
+<body>
+<div class="app">
+  <div class="sidebar">
+    <div class="logo">
+      <div class="logo-icon">✦</div>
+      <div><div class="logo-name">MacCleaner</div><div class="logo-sub">System Utility</div></div>
+    </div>
+    <div class="nav-label">Tools</div>
+    <div class="nav-item active" data-page="dashboard"><span class="nav-icon">⚡</span>Overview</div>
+    <div class="nav-item" data-page="ram"><span class="nav-icon">🧠</span>RAM Cleaner</div>
+    <div class="nav-item" data-page="disk"><span class="nav-icon">💾</span>Disk Cleaner</div>
+    <div class="nav-item" data-page="uninstall"><span class="nav-icon">📦</span>Uninstaller</div>
+    <div class="nav-item" data-page="startup"><span class="nav-icon">🚀</span>Startup Items</div>
+    <div class="nav-item" data-page="privacy"><span class="nav-icon">🔒</span>Privacy Cleaner</div>
+    <div class="sidebar-footer">
+      <div class="status-row"><div class="dot"></div>System monitoring active</div>
+      <div style="padding:0 12px;font-size:10px;color:#2a2a40">MacCleaner v1.0.0</div>
+    </div>
+  </div>
+  <div class="main">
+
+    <!-- DASHBOARD -->
+    <div class="page active" id="page-dashboard">
+      <div class="page-header">
+        <div><div class="page-title">System Overview</div><div class="page-sub" id="dash-sub">Loading…</div></div>
+        <div class="header-actions">
+          <button class="btn btn-ghost btn-sm" id="dash-refresh-btn" onclick="loadDashboard()">↻ Refresh</button>
+          <button class="btn btn-primary" id="scan-btn" onclick="runScan()">⟳ Smart Scan</button>
+        </div>
+      </div>
+      <div id="dash-notice"></div>
+      <div class="grid-3" id="dash-stats">
+        <div class="card"><div class="skel" style="height:14px;width:50%;margin-bottom:10px"></div><div class="skel" style="height:32px;width:60%;margin-bottom:6px"></div><div class="skel" style="height:12px;width:75%"></div></div>
+        <div class="card"><div class="skel" style="height:14px;width:50%;margin-bottom:10px"></div><div class="skel" style="height:32px;width:60%;margin-bottom:6px"></div><div class="skel" style="height:12px;width:75%"></div></div>
+        <div class="card"><div class="skel" style="height:14px;width:50%;margin-bottom:10px"></div><div class="skel" style="height:32px;width:60%;margin-bottom:6px"></div><div class="skel" style="height:12px;width:75%"></div></div>
+      </div>
+      <div class="grid-2">
+        <div class="card" id="dash-ram-card"><div class="card-title">RAM</div><div class="skel" style="height:130px;border-radius:8px"></div></div>
+        <div class="card" id="dash-disk-card"><div class="card-title">Storage</div><div class="skel" style="height:130px;border-radius:8px"></div></div>
+      </div>
+      <div class="card">
+        <div class="card-title">Quick Actions</div>
+        <div class="action-grid">
+          <div class="action-card" onclick="nav('ram')"><div class="action-icon">⚡</div><div class="action-label">Clean RAM</div></div>
+          <div class="action-card" onclick="nav('disk')"><div class="action-icon">🗑️</div><div class="action-label">Disk Cleaner</div></div>
+          <div class="action-card" onclick="nav('uninstall')"><div class="action-icon">📦</div><div class="action-label">Uninstall Apps</div></div>
+          <div class="action-card" onclick="nav('startup')"><div class="action-icon">🚀</div><div class="action-label">Startup Items</div></div>
+          <div class="action-card" onclick="nav('privacy')"><div class="action-icon">🔒</div><div class="action-label">Privacy</div></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- RAM -->
+    <div class="page" id="page-ram">
+      <div class="page-header">
+        <div><div class="page-title">RAM Cleaner</div><div class="page-sub">Free up inactive memory for better performance</div></div>
+        <div class="header-actions"><button class="btn btn-ghost btn-sm" onclick="loadRAM()">↻ Refresh</button></div>
+      </div>
+      <div id="ram-notice"></div>
+      <div class="grid-2">
+        <div class="card" style="text-align:center;padding:28px 20px">
+          <div id="ram-gauge" style="display:flex;justify-content:center;margin-bottom:14px"><div class="skel" style="width:150px;height:150px;border-radius:50%"></div></div>
+          <div id="ram-gauge-sub" style="font-size:13px;color:var(--muted);margin-bottom:16px">Loading…</div>
+          <button class="btn btn-primary" id="free-ram-btn" onclick="freeRAM()" style="width:100%;justify-content:center">⚡ Free Inactive RAM</button>
+          <div style="font-size:11px;color:var(--muted);margin-top:10px">Uses <code>purge</code> — requires admin password</div>
+        </div>
+        <div class="card"><div class="card-title">Memory Breakdown</div><div id="ram-breakdown"><div class="skel" style="height:200px;border-radius:8px"></div></div></div>
+      </div>
+      <div class="card"><div class="card-title">Top Memory Consumers</div><div id="ram-processes"><div class="skel" style="height:180px;border-radius:8px"></div></div></div>
+    </div>
+
+    <!-- DISK -->
+    <div class="page" id="page-disk">
+      <div class="page-header">
+        <div><div class="page-title">Disk Cleaner</div><div class="page-sub">Remove junk files, caches, and temporary data</div></div>
+        <div class="header-actions"><button class="btn btn-ghost btn-sm" onclick="loadDisk()">↻ Rescan</button></div>
+      </div>
+      <div id="disk-notice"></div>
+      <div class="grid-3" id="disk-stats-row">
+        <div class="card" id="disk-stat-total" style="text-align:center"><div class="card-title">🗑️ Junk Found</div><div style="font-size:26px;font-weight:800;color:var(--danger)">—</div></div>
+        <div class="card" style="text-align:center"><div class="card-title">✨ Cleaned</div><div style="font-size:26px;font-weight:800;color:var(--success)" id="disk-cleaned-amt">0 B</div></div>
+        <div class="card" id="disk-stat-remaining" style="text-align:center"><div class="card-title">📊 Remaining</div><div style="font-size:26px;font-weight:800;color:var(--warn)">—</div></div>
+      </div>
+      <div class="card"><div class="card-title">Junk Categories</div><div id="disk-list"><div class="skel" style="height:240px;border-radius:8px"></div></div></div>
+    </div>
+
+    <!-- UNINSTALL -->
+    <div class="page" id="page-uninstall">
+      <div class="page-header">
+        <div><div class="page-title">App Uninstaller</div><div class="page-sub">Completely remove apps and all leftover files</div></div>
+        <div class="header-actions"><button class="btn btn-ghost btn-sm" onclick="loadApps()">↻ Rescan</button></div>
+      </div>
+      <div id="uninstall-notice"></div>
+      <div class="card">
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px">
+          <div class="card-title" style="margin:0">Installed Applications</div>
+          <span id="app-count" style="font-size:12px;color:var(--muted)"></span>
+        </div>
+        <div id="app-list"><div class="skel" style="height:280px;border-radius:8px"></div></div>
+      </div>
+    </div>
+
+    <!-- STARTUP -->
+    <div class="page" id="page-startup">
+      <div class="page-header">
+        <div><div class="page-title">Startup Items</div><div class="page-sub">Control what launches when your Mac starts</div></div>
+        <div class="header-actions"><button class="btn btn-ghost btn-sm" onclick="loadStartup()">↻ Refresh</button></div>
+      </div>
+      <div class="grid-2" style="margin-bottom:16px">
+        <div class="card"><div class="card-title">🚀 Active Items</div><div style="font-size:36px;font-weight:800;color:var(--warn)" id="startup-active">—</div></div>
+        <div class="card"><div class="card-title">⚠️ High Impact</div><div style="font-size:36px;font-weight:800;color:var(--danger)" id="startup-high">—</div></div>
+      </div>
+      <div class="card"><div class="card-title">Launch Agents &amp; Login Items</div><div id="startup-list"><div class="skel" style="height:240px;border-radius:8px"></div></div></div>
+    </div>
+
+    <!-- PRIVACY -->
+    <div class="page" id="page-privacy">
+      <div class="page-header">
+        <div><div class="page-title">Privacy Cleaner</div><div class="page-sub">Remove traces and protect your digital privacy</div></div>
+        <div class="header-actions"><button class="btn btn-primary" onclick="clearAllPrivacy()">🔒 Clear All</button></div>
+      </div>
+      <div id="privacy-notice"></div>
+      <div class="card"><div class="card-title">Privacy Traces</div><div id="privacy-list"></div></div>
+    </div>
+
+  </div>
+</div>
+<script>
+'use strict';
+// Safety check - if api is missing, show an error
+if (!window.api) {
+  document.querySelector('.main').innerHTML = '<div style="display:flex;flex-direction:column;align-items:center;justify-content:center;height:100%;gap:16px;color:#e8e8f0"><div style="font-size:48px">⚠️</div><div style="font-size:20px;font-weight:700">Preload bridge not found</div><div style="font-size:14px;color:#6b6b80;text-align:center;max-width:400px">The app could not connect to system APIs. Please restart with: <code style="background:#16161f;padding:4px 8px;border-radius:6px;color:#5b8af5">npm start</code></div></div>';
+  throw new Error('window.api is undefined — preload.js may not have loaded');
+}
+const bridge = window.api;
+console.log('API ready:', bridge.arch);
+console.log('✅ API bridge loaded, arch:', bridge.arch);
+
+// ── Nav ───────────────────────────────────────────────────────────────────────
+const loaders = {dashboard:loadDashboard,ram:loadRAM,disk:loadDisk,uninstall:loadApps,startup:loadStartup,privacy:buildPrivacy};
+function nav(id){
+  document.querySelectorAll('.page').forEach(p=>p.classList.remove('active'));
+  document.querySelectorAll('.nav-item').forEach(n=>n.classList.remove('active'));
+  document.getElementById('page-'+id).classList.add('active');
+  document.querySelector('.nav-item[data-page="'+id+'"]').classList.add('active');
+  if(loaders[id]) loaders[id]();
+}
+document.querySelectorAll('.nav-item').forEach(el=>el.addEventListener('click',()=>nav(el.dataset.page)));
+
+// ── Helpers ───────────────────────────────────────────────────────────────────
+function fmt(b){
+  if(!b||b<0) return '0 B';
+  if(b<1048576) return (b/1024).toFixed(1)+' KB';
+  if(b<1073741824) return (b/1048576).toFixed(1)+' MB';
+  return (b/1073741824).toFixed(2)+' GB';
+}
+function rC(p){return p>85?'var(--danger)':p>65?'var(--warn)':'var(--success)';}
+function dC(p){return p>90?'var(--danger)':p>75?'var(--warn)':'var(--accent)';}
+function iC(i){return i==='High'?'var(--danger)':i==='Medium'?'var(--warn)':'var(--success)';}
+function gauge(pct,color,label,size){
+  size=size||150;
+  const r=58,cx=size/2,cy=size/2,circ=2*Math.PI*r,off=circ-(pct/100)*circ;
+  return '<div class="gauge-wrap" style="width:'+size+'px;height:'+size+'px">'+
+    '<svg width="'+size+'" height="'+size+'" style="transform:rotate(-90deg)">'+
+    '<circle cx="'+cx+'" cy="'+cy+'" r="'+r+'" fill="none" stroke="rgba(255,255,255,0.05)" stroke-width="10"/>'+
+    '<circle cx="'+cx+'" cy="'+cy+'" r="'+r+'" fill="none" stroke="'+color+'" stroke-width="10" stroke-dasharray="'+circ+'" stroke-dashoffset="'+off+'" stroke-linecap="round" style="transition:stroke-dashoffset 1s ease;filter:drop-shadow(0 0 8px '+color+'60)"/>'+
+    '</svg><div class="gauge-text"><div class="gauge-pct" style="color:'+color+'">'+pct+'%</div><div class="gauge-label">'+label+'</div></div></div>';
+}
+function notice(elId,type,icon,title,sub){
+  var el=document.getElementById(elId);
+  if(!el) return;
+  var c=type==='success'?'var(--success)':type==='error'?'var(--danger)':'var(--accent)';
+  el.innerHTML='<div class="notice '+type+'"><div style="font-size:22px;flex-shrink:0">'+icon+'</div><div><div style="font-size:14px;font-weight:600;color:'+c+'">'+title+'</div>'+(sub?'<div style="font-size:12px;color:var(--muted);margin-top:2px">'+sub+'</div>':'')+'</div><button class="btn btn-ghost btn-sm" style="margin-left:auto;padding:4px 8px" onclick="this.closest(\'.notice\').remove()">✕</button></div>';
+}
+
+// ── Dashboard ─────────────────────────────────────────────────────────────────
+async function loadDashboard(){
+  console.log('loadDashboard called');
+  var btn=document.getElementById('dash-refresh-btn');
+  if(btn){btn.disabled=true;btn.textContent='↻ Loading…';}
+  try{
+    var info=await bridge.getSystemInfo();
+    document.getElementById('dash-sub').textContent=info.hostname+' · macOS · '+bridge.arch;
+    var r=info.ram,d=info.disk,rc=rC(r.usedPct),dc=dC(d.pct);
+    document.getElementById('dash-stats').innerHTML=
+      statCard('🧠 RAM Usage',r.usedPct+'%',fmt(r.used)+' of '+fmt(r.total),rc)+
+      statCard('💾 Disk Usage',d.pct+'%',fmt(d.used)+' of '+fmt(d.total),dc)+
+      statCard('🔋 Battery',info.battery?info.battery.pct+'%':'N/A',info.battery?(info.battery.charging?'⚡ Charging':'🔋 On battery'):'Desktop Mac','var(--accent3)');
+    document.getElementById('dash-ram-card').innerHTML=
+      '<div class="card-title">RAM Breakdown</div><div style="display:flex;align-items:center;gap:16px">'+
+      gauge(r.usedPct,rc,'Used',115)+
+      '<div style="flex:1;display:flex;flex-direction:column;gap:7px">'+
+      [{l:'Wired',b:r.wired,c:'#5b8af5'},{l:'Active',b:r.active,c:'var(--warn)'},{l:'Inactive',b:r.inactive,c:'var(--accent2)'},{l:'Free',b:r.free,c:'var(--success)'}]
+      .map(m=>'<div><div style="display:flex;justify-content:space-between;font-size:11px;margin-bottom:2px"><span style="color:var(--muted)">'+m.l+'</span><span style="font-weight:500">'+fmt(m.b)+'</span></div><div class="bar-wrap" style="height:4px"><div class="bar-fill" style="width:'+Math.round(m.b/r.total*100)+'%;background:'+m.c+'"></div></div></div>').join('')+
+      '<button class="btn btn-ghost btn-sm" onclick="nav(\'ram\')" style="margin-top:4px">⚡ Clean RAM →</button></div></div>';
+    document.getElementById('dash-disk-card').innerHTML=
+      '<div class="card-title">Storage</div><div style="font-size:13px;color:var(--muted);margin-bottom:8px">'+fmt(d.free)+' available of '+fmt(d.total)+'</div>'+
+      '<div class="bar-wrap" style="height:10px;border-radius:6px;margin-bottom:14px"><div class="bar-fill" style="width:'+d.pct+'%;background:linear-gradient(90deg,var(--accent),'+dc+');border-radius:6px;height:10px"></div></div>'+
+      '<div style="display:flex;justify-content:space-between;font-size:13px;margin-bottom:5px"><span style="color:var(--muted)">Used</span><span style="font-weight:600;color:var(--accent)">'+fmt(d.used)+'</span></div>'+
+      '<div style="display:flex;justify-content:space-between;font-size:13px;margin-bottom:14px"><span style="color:var(--muted)">Free</span><span style="font-weight:600;color:var(--success)">'+fmt(d.free)+'</span></div>'+
+      '<button class="btn btn-ghost btn-sm" onclick="nav(\'disk\')" style="width:100%;justify-content:center">🔍 Scan &amp; Clean Disk →</button>';
+  }catch(e){notice('dash-notice','error','⚠️','Could not load system info',e.message);}
+  if(btn){btn.disabled=false;btn.textContent='↻ Refresh';}
+}
+function statCard(title,val,sub,color){
+  return '<div class="card" style="position:relative;overflow:hidden"><div style="position:absolute;top:-20px;right:-20px;width:90px;height:90px;border-radius:50%;background:'+color+'0f"></div><div class="card-title">'+title+'</div><div style="font-size:30px;font-weight:800;color:'+color+';letter-spacing:-1px;margin-bottom:4px">'+val+'</div><div style="font-size:12px;color:var(--muted)">'+sub+'</div></div>';
+}
+var scanning=false;
+async function runScan(){
+  if(scanning)return;scanning=true;
+  var btn=document.getElementById('scan-btn');
+  btn.disabled=true;btn.innerHTML='<span class="spin">⟳</span> Scanning…';
+  await loadDashboard();
+  await new Promise(r=>setTimeout(r,1200));
+  btn.disabled=false;btn.innerHTML='⟳ Smart Scan';scanning=false;
+  notice('dash-notice','success','✅','Scan complete','Your Mac has been analyzed. Use the tools in the sidebar to clean and optimize.');
+}
+
+// ── RAM ───────────────────────────────────────────────────────────────────────
+async function loadRAM(){
+  try{
+    var info=await bridge.getSystemInfo(),procs=await bridge.getRamProcesses();
+    var r=info.ram,color=rC(r.usedPct);
+    document.getElementById('ram-gauge').innerHTML=gauge(r.usedPct,color,'Memory Used',160);
+    document.getElementById('ram-gauge-sub').innerHTML=fmt(r.used)+' used of '+fmt(r.total)+'<br><span style="font-size:11px">'+(r.usedPct<50?'✅ Healthy':r.usedPct<75?'⚠️ Moderate pressure':'🔴 High pressure')+'</span>';
+    document.getElementById('ram-breakdown').innerHTML=
+      [{l:'Wired Memory',d:'Reserved by macOS',b:r.wired,c:'#5b8af5'},
+       {l:'Active Memory',d:'Used by apps',b:r.active,c:'var(--warn)'},
+       {l:'Inactive Memory',d:'Reclaimable',b:r.inactive,c:'var(--accent2)'},
+       {l:'Compressed',d:'Compressed to save space',b:r.compressed,c:'#f97316'},
+       {l:'Free',d:'Immediately available',b:r.free,c:'var(--success)'}]
+      .map(m=>'<div style="margin-bottom:12px"><div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:4px"><div><div style="font-size:13px;font-weight:500">'+m.l+'</div><div style="font-size:11px;color:var(--muted)">'+m.d+'</div></div><span style="font-size:13px;font-weight:600;color:'+m.c+';margin-left:8px">'+fmt(m.b)+'</span></div><div class="bar-wrap"><div class="bar-fill" style="width:'+Math.round(m.b/r.total*100)+'%;background:'+m.c+'"></div></div></div>').join('');
+    document.getElementById('ram-processes').innerHTML=procs.length?
+      procs.map((p,i)=>'<div class="app-row"><div style="width:22px;font-size:12px;color:var(--muted);text-align:right">'+(i+1)+'</div><div class="app-info"><div class="app-name">'+p.name+'</div><div style="margin-top:4px"><div class="bar-wrap" style="height:4px"><div class="bar-fill" style="width:'+Math.round(p.mem/procs[0].mem*100)+'%;background:var(--accent)"></div></div></div></div><span style="font-size:13px;font-weight:600;color:var(--accent)">'+p.memStr+'</span></div>').join(''):
+      '<div class="empty"><span style="font-size:36px;display:block;margin-bottom:8px">📊</span>No process data</div>';
+  }catch(e){notice('ram-notice','error','⚠️','Failed to load RAM info',e.message);}
+}
+async function freeRAM(){
+  var btn=document.getElementById('free-ram-btn');
+  btn.disabled=true;btn.innerHTML='<span class="spin">⟳</span> Freeing RAM…';
+  var res=await bridge.freeRAM();
+  btn.disabled=false;btn.innerHTML='⚡ Free Inactive RAM';
+  if(res.success){notice('ram-notice','success','✅','RAM freed successfully!','Inactive memory has been purged.');loadRAM();}
+  else notice('ram-notice','error','⚠️','Could not free RAM',res.error||'Try running with admin privileges.');
+}
+
+// ── Disk ──────────────────────────────────────────────────────────────────────
+var diskItems=[],diskCleaned=0;
+async function loadDisk(){
+  document.getElementById('disk-list').innerHTML='<div class="skel" style="height:240px;border-radius:8px"></div>';
+  try{
+    diskItems=await bridge.getDiskJunk();
+    diskCleaned=0;document.getElementById('disk-cleaned-amt').textContent='0 B';
+    renderDisk();updateDiskStats();
+  }catch(e){
+    notice('disk-notice','error','⚠️','Failed to scan disk junk',e.message);
+    document.getElementById('disk-list').innerHTML='<div class="empty"><span style="font-size:36px;display:block;margin-bottom:8px">⚠️</span>Could not load disk data</div>';
+  }
+}
+function updateDiskStats(){
+  var total=diskItems.reduce(function(a,i){return a+i.bytes;},0);
+  var rem=diskItems.filter(function(i){return !i._c;}).reduce(function(a,i){return a+i.bytes;},0);
+  document.getElementById('disk-stat-total').innerHTML='<div class="card-title">🗑️ Junk Found</div><div style="font-size:26px;font-weight:800;color:var(--danger)">'+fmt(total)+'</div>';
+  document.getElementById('disk-stat-remaining').innerHTML='<div class="card-title">📊 Remaining</div><div style="font-size:26px;font-weight:800;color:var(--warn)">'+fmt(rem)+'</div>';
+}
+function renderDisk(){
+  var colors={user_cache:'#5b8af5',system_logs:'var(--warn)',trash:'var(--danger)',mail_cache:'var(--accent2)',xcode_derived:'#f97316',ios_backups:'#6366f1',app_downloads:'var(--success)',language_files:'var(--accent3)'};
+  document.getElementById('disk-list').innerHTML=diskItems.map(function(item){
+    var c=item.color||colors[item.id]||'var(--accent)';
+    var pct=Math.min(item.bytes/(5*1073741824)*100,100).toFixed(1);
+    return '<div class="app-row"><div class="app-icon" style="background:'+c+'20">'+item.icon+'</div>'+
+      '<div class="app-info"><div class="app-name">'+item.name+'</div><div class="app-meta">'+item.description+'</div>'+
+      (!item._c&&item.bytes>0?'<div style="margin-top:4px"><div class="bar-wrap" style="height:4px"><div class="bar-fill" style="width:'+pct+'%;background:'+c+'"></div></div></div>':'')+
+      '</div><div style="text-align:right;margin-right:8px"><div style="font-size:14px;font-weight:700;color:'+(item._c?'var(--muted)':c)+';'+(item._c?'text-decoration:line-through':'')+'">'+(item.sizeStr||'—')+'</div></div>'+
+      (item._c?'<span class="tag" style="background:rgba(34,197,94,0.1);color:var(--success)">✓ Cleaned</span>':
+       item.scanOnly?'<span class="tag" style="background:rgba(255,255,255,0.05);color:var(--muted)">Manual</span>':
+       item.bytes===0?'<span class="tag" style="background:rgba(34,197,94,0.08);color:var(--success)">✓ Empty</span>':
+       '<button class="btn btn-ghost btn-sm" id="dbtn-'+item.id+'" onclick="cleanDisk(\''+item.id+'\')">🗑️ Clean</button>')+
+      '</div>';
+  }).join('')||'<div class="empty"><span style="font-size:36px;display:block;margin-bottom:8px">✨</span>No junk found!</div>';
+}
+async function cleanDisk(id){
+  var btn=document.getElementById('dbtn-'+id);
+  if(btn){btn.disabled=true;btn.innerHTML='<span class="spin">⟳</span>';}
+  var res=await bridge.cleanDiskItem(id);
+  var item=diskItems.find(function(i){return i.id===id;});
+  if(res.success&&item){
+    diskCleaned+=item.bytes;item._c=true;
+    document.getElementById('disk-cleaned-amt').textContent=fmt(diskCleaned);
+    renderDisk();updateDiskStats();
+    notice('disk-notice','success','✨',fmt(diskCleaned)+' freed so far!');
+  }else if(btn){btn.disabled=false;btn.innerHTML='🗑️ Clean';}
+}
+
+// ── Apps ──────────────────────────────────────────────────────────────────────
+var appList=[];
+var appColors=['#5b8af5','#a855f7','#22d3b8','#f97316','#22c55e','#eab308','#ef4444','#06b6d4'];
+var appIcons={game:'🎮',music:'🎵',productivity:'💼',design:'🎨',video:'📹',browser:'🌐',developer:'⚙️',utilities:'🔧',social:'💬',education:'📚'};
+async function loadApps(){
+  document.getElementById('app-list').innerHTML='<div class="skel" style="height:280px;border-radius:8px"></div>';
+  document.getElementById('uninstall-notice').innerHTML='';
+  try{
+    appList=await bridge.listApps();
+    document.getElementById('app-count').textContent=appList.length+' apps found';
+    renderApps();
+  }catch(e){
+    notice('uninstall-notice','error','⚠️','Failed to list applications',e.message);
+    document.getElementById('app-count').textContent='0 apps found';
+    document.getElementById('app-list').innerHTML='<div class="empty"><span style="font-size:36px;display:block;margin-bottom:8px">⚠️</span>Could not load installed apps</div>';
+  }
+}
+function renderApps(){
+  document.getElementById('app-list').innerHTML=appList.length?
+    appList.map(function(app){
+      var c=appColors[app.name.charCodeAt(0)%appColors.length];
+      var icon=appIcons[(app.category||'').toLowerCase()]||'📦';
+      var safeId=app.id.replace(/[^a-zA-Z0-9_-]/g,'_');
+      var safePath=app.path.replace(/\\/g,'\\\\').replace(/'/g,"\\'");
+      return '<div class="app-row" id="arow-'+safeId+'">'+
+        '<div class="app-icon" style="background:'+c+'20">'+icon+'</div>'+
+        '<div class="app-info"><div class="app-name">'+app.name+'</div>'+
+        '<div class="app-meta"><span>'+app.sizeStr+'</span>'+
+        (app.leftover>0?'<span class="tag" style="background:rgba(239,68,68,0.1);color:var(--danger)">+'+app.leftoverStr+' leftovers</span>':'')+
+        '</div></div>'+
+        '<button class="btn btn-ghost btn-sm" onclick="window.api.openInFinder(\''+safePath+'\')">📂</button>'+
+        '<button class="btn btn-danger btn-sm" id="ubtn-'+safeId+'" onclick="doUninstall(\''+safeId+'\',\''+safePath+'\')">🗑️ Uninstall</button>'+
+        '</div>';
+    }).join(''):
+    '<div class="empty"><span style="font-size:36px;display:block;margin-bottom:8px">📦</span>No applications found</div>';
+}
+async function doUninstall(safeId,appPath){
+  var btn=document.getElementById('ubtn-'+safeId);
+  if(btn){btn.disabled=true;btn.innerHTML='<span class="spin">⟳</span>';}
+  var app=appList.find(function(a){return a.id.replace(/[^a-zA-Z0-9_-]/g,'_')===safeId;});
+  var res=await bridge.uninstallApp({appPath:appPath,leftoverPaths:app?app.leftoverPaths:[]});
+  if(res.cancelled){if(btn){btn.disabled=false;btn.innerHTML='🗑️ Uninstall';}return;}
+  if(res.success){
+    var row=document.getElementById('arow-'+safeId);if(row)row.remove();
+    appList=appList.filter(function(a){return a.id.replace(/[^a-zA-Z0-9_-]/g,'_')!==safeId;});
+    document.getElementById('app-count').textContent=appList.length+' apps found';
+    notice('uninstall-notice','success','✅','App uninstalled and moved to Trash.');
+  }else{
+    if(btn){btn.disabled=false;btn.innerHTML='🗑️ Uninstall';}
+    notice('uninstall-notice','error','⚠️','Uninstall failed',res.error||'Unknown error');
+  }
+}
+
+// ── Startup ───────────────────────────────────────────────────────────────────
+var startupItems=[];
+async function loadStartup(){
+  document.getElementById('startup-list').innerHTML='<div class="skel" style="height:240px;border-radius:8px"></div>';
+  try{
+    startupItems=await bridge.getStartupItems();
+    renderStartup();
+  }catch(e){
+    notice('dash-notice','error','⚠️','Failed to load startup items',e.message);
+    document.getElementById('startup-list').innerHTML='<div class="empty"><span style="font-size:36px;display:block;margin-bottom:8px">⚠️</span>Could not load startup items</div>';
+    document.getElementById('startup-active').textContent='—';
+    document.getElementById('startup-high').textContent='—';
+  }
+}
+function renderStartup(){
+  document.getElementById('startup-active').textContent=startupItems.filter(function(i){return i.enabled;}).length;
+  document.getElementById('startup-high').textContent=startupItems.filter(function(i){return i.impact==='High'&&i.enabled;}).length;
+  document.getElementById('startup-list').innerHTML=startupItems.length?
+    startupItems.map(function(item){
+      var safeId=item.id.replace(/[^a-zA-Z0-9_-]/g,'_');
+      return '<div class="app-row">'+
+        '<div class="app-info"><div class="app-name monospace">'+item.name+'</div>'+
+        '<div class="app-meta">'+
+        '<span class="tag" style="background:'+iC(item.impact)+'18;color:'+iC(item.impact)+'">'+item.impact+' Impact</span>'+
+        (item.system?'<span class="tag" style="background:rgba(255,255,255,0.05);color:var(--muted)">System</span>':'')+
+        '<span style="font-size:11px;color:var(--muted)">'+(item.enabled?'Active at startup':'Disabled')+'</span>'+
+        '</div></div>'+
+        '<div class="toggle '+(item.enabled?'on':'')+'" id="tog-'+safeId+'" onclick="toggleItem(\''+safeId+'\')"></div>'+
+        '</div>';
+    }).join(''):
+    '<div class="empty"><span style="font-size:36px;display:block;margin-bottom:8px">🚀</span>No startup items found</div>';
+}
+async function toggleItem(safeId){
+  var item=startupItems.find(function(i){return i.id.replace(/[^a-zA-Z0-9_-]/g,'_')===safeId;});
+  if(!item)return;
+  var tog=document.getElementById('tog-'+safeId);tog.style.opacity='0.4';
+  var res=await bridge.toggleStartupItem(item);
+  tog.style.opacity='1';
+  if(res.success){item.enabled=!item.enabled;renderStartup();}
+}
+
+// ── Privacy ───────────────────────────────────────────────────────────────────
+var privItems=[
+  {id:'browser_history',name:'Browser History',icon:'🌐',desc:'Safari & Chrome browsing history',risk:'High'},
+  {id:'recent_files',name:'Recent Files',icon:'📄',desc:'Recently opened documents list',risk:'Medium'},
+  {id:'downloads_history',name:'Downloads History',icon:'⬇️',desc:'Safari downloads list',risk:'Low'},
+  {id:'clipboard',name:'Clipboard',icon:'📋',desc:'Currently stored clipboard contents',risk:'Medium'},
+  {id:'wifi_passwords',name:'Wi-Fi Networks',icon:'📶',desc:'Saved wireless network history',risk:'Low'},
+  {id:'crash_logs',name:'Crash Reports',icon:'💥',desc:'App crash and diagnostic logs',risk:'Low'},
+  {id:'location_history',name:'Location History',icon:'📍',desc:'Location services history',risk:'High'},
+  {id:'siri_history',name:'Siri Data',icon:'🎙️',desc:'Siri knowledge and interactions',risk:'Medium'},
+];
+var privCleared=new Set();
+function riskColor(r){return r==='High'?'var(--danger)':r==='Medium'?'var(--warn)':'var(--success)';}
+function buildPrivacy(){
+  document.getElementById('privacy-list').innerHTML=privItems.map(function(item){
+    var cleared=privCleared.has(item.id);
+    return '<div class="app-row">'+
+      '<div class="app-icon" style="background:rgba(91,138,245,0.1)">'+item.icon+'</div>'+
+      '<div class="app-info"><div class="app-name">'+item.name+'</div>'+
+      '<div class="app-meta">'+item.desc+
+      ' <span class="tag" style="background:'+riskColor(item.risk)+'18;color:'+riskColor(item.risk)+'">'+item.risk+' Risk</span></div></div>'+
+      (cleared?'<span class="tag" style="background:rgba(34,197,94,0.1);color:var(--success)">✓ Cleared</span>':
+       '<button class="btn btn-ghost btn-sm" id="pbtn-'+item.id+'" onclick="clearPrivacy(\''+item.id+'\')">🧹 Clear</button>')+
+      '</div>';
+  }).join('');
+}
+async function clearPrivacy(id){
+  var btn=document.getElementById('pbtn-'+id);
+  if(btn){btn.disabled=true;btn.innerHTML='<span class="spin">⟳</span>';}
+  var res=await bridge.clearPrivacy(id);
+  if(res.success){privCleared.add(id);buildPrivacy();notice('privacy-notice','success','🛡️',privCleared.size+' trace'+(privCleared.size>1?'s':'')+' cleared');}
+  else if(btn){btn.disabled=false;btn.innerHTML='🧹 Clear';}
+}
+async function clearAllPrivacy(){
+  for(var i=0;i<privItems.length;i++){
+    if(!privCleared.has(privItems[i].id)){await clearPrivacy(privItems[i].id);await new Promise(function(r){setTimeout(r,150);});}
+  }
+}
+
+// ── Init ──────────────────────────────────────────────────────────────────────
+console.log('MacCleaner renderer initializing...');
+buildPrivacy();
+loadDashboard().catch(function(e){ console.error('Dashboard load failed:', e); });
+setInterval(function(){ loadDashboard().catch(function(){}); }, 15000);
+</script>
+</body>
+</html>
