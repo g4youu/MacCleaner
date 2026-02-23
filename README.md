@@ -1,4 +1,6 @@
 # MacCleaner
+<img width="1096" height="603" alt="image" src="https://github.com/user-attachments/assets/69808e67-2aec-4b69-af31-7f5ad3d1d1ba" />
+
 
 MacCleaner is a macOS utility app built with Electron to inspect and clean common system junk safely from one interface.
 
