@@ -15,6 +15,12 @@
 }
 html,body{height:100%;overflow:hidden;background:var(--bg);color:var(--text)}
 body{font-family:-apple-system,'SF Pro Display','Helvetica Neue',sans-serif}
+.window-dragbar{
+  position:fixed;top:0;left:0;right:0;height:38px;
+  background:linear-gradient(180deg,rgba(22,22,31,0.95),rgba(13,13,20,0.8));
+  border-bottom:1px solid var(--border);
+  -webkit-app-region:drag;z-index:1000;
+}
 .app{display:flex;height:100vh}
 .sidebar{width:220px;min-width:220px;background:var(--sidebar);border-right:1px solid var(--border);
   display:flex;flex-direction:column;padding:0 12px 16px;-webkit-app-region:drag}
@@ -34,12 +40,16 @@ body{font-family:-apple-system,'SF Pro Display','Helvetica Neue',sans-serif}
 .sidebar-footer{margin-top:auto;padding-top:12px;border-top:1px solid var(--border)}
 .status-row{display:flex;align-items:center;gap:6px;padding:8px 12px;font-size:11px;color:var(--muted)}
 .dot{width:6px;height:6px;border-radius:50%;background:var(--success);animation:pulse 2s ease infinite;flex-shrink:0}
-.main{flex:1;overflow-y:auto;padding:28px 32px;scrollbar-width:thin;scrollbar-color:var(--border) transparent}
+.main{flex:1;overflow-y:auto;padding:52px 32px 28px;scrollbar-width:thin;scrollbar-color:var(--border) transparent}
 .main::-webkit-scrollbar{width:5px}
 .main::-webkit-scrollbar-thumb{background:var(--border);border-radius:3px}
 .page{display:none;animation:fadeIn 0.2s ease}
 .page.active{display:block}
-.page-header{display:flex;align-items:flex-start;justify-content:space-between;margin-bottom:24px}
+.page-header{
+  display:flex;align-items:flex-start;justify-content:space-between;margin-bottom:24px;
+  background:var(--card2);border:1px solid var(--border);border-radius:14px;
+  padding:16px 18px;
+}
 .page-title{font-size:26px;font-weight:700;letter-spacing:-0.5px}
 .page-sub{font-size:13px;color:var(--muted);margin-top:3px}
 .header-actions{display:flex;gap:8px;align-items:center}
@@ -58,6 +68,7 @@ body{font-family:-apple-system,'SF Pro Display','Helvetica Neue',sans-serif}
 .card-title{font-size:11px;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:0.5px;margin-bottom:14px}
 .grid-2{display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:16px}
 .grid-3{display:grid;grid-template-columns:1fr 1fr 1fr;gap:16px;margin-bottom:16px}
+.grid-4{display:grid;grid-template-columns:repeat(4,1fr);gap:16px;margin-bottom:16px}
 .bar-wrap{height:6px;background:var(--card2);border-radius:3px;overflow:hidden}
 .bar-fill{height:100%;border-radius:3px;transition:width 0.7s ease}
 .gauge-wrap{position:relative;display:inline-block}
@@ -82,7 +93,7 @@ body{font-family:-apple-system,'SF Pro Display','Helvetica Neue',sans-serif}
 .notice.error{background:rgba(239,68,68,0.07);border:1px solid rgba(239,68,68,0.18)}
 .skel{background:linear-gradient(90deg,var(--card2) 25%,rgba(255,255,255,0.04) 50%,var(--card2) 75%);
   background-size:200% 100%;animation:shimmer 1.4s infinite;border-radius:6px}
-.action-grid{display:grid;grid-template-columns:repeat(5,1fr);gap:10px}
+.action-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:10px}
 .action-card{background:var(--card2);border:1px solid var(--border);border-radius:12px;
   padding:16px 12px;text-align:center;cursor:pointer;transition:all 0.15s;user-select:none}
 .action-card:hover{background:var(--card);border-color:rgba(255,255,255,0.12);transform:translateY(-1px)}
@@ -99,6 +110,7 @@ body{font-family:-apple-system,'SF Pro Display','Helvetica Neue',sans-serif}
 </style>
 </head>
 <body>
+<div class="window-dragbar"></div>
 <div class="app">
   <div class="sidebar">
     <div class="logo">
@@ -107,14 +119,23 @@ body{font-family:-apple-system,'SF Pro Display','Helvetica Neue',sans-serif}
     </div>
     <div class="nav-label">Tools</div>
     <div class="nav-item active" data-page="dashboard"><span class="nav-icon">⚡</span>Overview</div>
+    <div class="nav-item" data-page="cpu"><span class="nav-icon">🧮</span>CPU Monitor</div>
     <div class="nav-item" data-page="ram"><span class="nav-icon">🧠</span>RAM Cleaner</div>
     <div class="nav-item" data-page="disk"><span class="nav-icon">💾</span>Disk Cleaner</div>
     <div class="nav-item" data-page="uninstall"><span class="nav-icon">📦</span>Uninstaller</div>
     <div class="nav-item" data-page="startup"><span class="nav-icon">🚀</span>Startup Items</div>
     <div class="nav-item" data-page="privacy"><span class="nav-icon">🔒</span>Privacy Cleaner</div>
     <div class="sidebar-footer">
-      <div class="status-row"><div class="dot"></div>System monitoring active</div>
-      <div style="padding:0 12px;font-size:10px;color:#2a2a40">MacCleaner v1.0.0</div>
+      <div class="status-row"><div class="dot"></div>System monitoring active <span onclick="refreshActivePage()" style="margin-left:auto;cursor:pointer;color:var(--muted);opacity:0.75">↻ Refresh</span></div>
+      <div style="padding:0 12px 8px">
+        <label for="refresh-mode" style="display:block;font-size:10px;color:var(--muted);margin-bottom:6px">Refresh Mode</label>
+        <select id="refresh-mode" style="width:100%;background:var(--card2);color:var(--text);border:1px solid var(--border);border-radius:8px;padding:6px 8px;font-size:11px;outline:none">
+          <option value="real-time">Real-time</option>
+          <option value="balanced">Balanced</option>
+          <option value="power-saver">Power Saver</option>
+        </select>
+      </div>
+      <div id="app-version" style="padding:0 12px;font-size:10px;color:#2a2a40">MacCleaner</div>
     </div>
   </div>
   <div class="main">
@@ -124,12 +145,12 @@ body{font-family:-apple-system,'SF Pro Display','Helvetica Neue',sans-serif}
       <div class="page-header">
         <div><div class="page-title">System Overview</div><div class="page-sub" id="dash-sub">Loading…</div></div>
         <div class="header-actions">
-          <button class="btn btn-ghost btn-sm" id="dash-refresh-btn" onclick="loadDashboard()">↻ Refresh</button>
           <button class="btn btn-primary" id="scan-btn" onclick="runScan()">⟳ Smart Scan</button>
         </div>
       </div>
       <div id="dash-notice"></div>
-      <div class="grid-3" id="dash-stats">
+      <div class="grid-4" id="dash-stats">
+        <div class="card"><div class="skel" style="height:14px;width:50%;margin-bottom:10px"></div><div class="skel" style="height:32px;width:60%;margin-bottom:6px"></div><div class="skel" style="height:12px;width:75%"></div></div>
         <div class="card"><div class="skel" style="height:14px;width:50%;margin-bottom:10px"></div><div class="skel" style="height:32px;width:60%;margin-bottom:6px"></div><div class="skel" style="height:12px;width:75%"></div></div>
         <div class="card"><div class="skel" style="height:14px;width:50%;margin-bottom:10px"></div><div class="skel" style="height:32px;width:60%;margin-bottom:6px"></div><div class="skel" style="height:12px;width:75%"></div></div>
         <div class="card"><div class="skel" style="height:14px;width:50%;margin-bottom:10px"></div><div class="skel" style="height:32px;width:60%;margin-bottom:6px"></div><div class="skel" style="height:12px;width:75%"></div></div>
@@ -141,6 +162,7 @@ body{font-family:-apple-system,'SF Pro Display','Helvetica Neue',sans-serif}
       <div class="card">
         <div class="card-title">Quick Actions</div>
         <div class="action-grid">
+          <div class="action-card" onclick="nav('cpu')"><div class="action-icon">🧮</div><div class="action-label">CPU Monitor</div></div>
           <div class="action-card" onclick="nav('ram')"><div class="action-icon">⚡</div><div class="action-label">Clean RAM</div></div>
           <div class="action-card" onclick="nav('disk')"><div class="action-icon">🗑️</div><div class="action-label">Disk Cleaner</div></div>
           <div class="action-card" onclick="nav('uninstall')"><div class="action-icon">📦</div><div class="action-label">Uninstall Apps</div></div>
@@ -148,6 +170,30 @@ body{font-family:-apple-system,'SF Pro Display','Helvetica Neue',sans-serif}
           <div class="action-card" onclick="nav('privacy')"><div class="action-icon">🔒</div><div class="action-label">Privacy</div></div>
         </div>
       </div>
+    </div>
+
+    <!-- CPU -->
+    <div class="page" id="page-cpu">
+      <div class="page-header">
+        <div><div class="page-title">CPU Monitor</div><div class="page-sub">Live processor usage and top CPU processes</div></div>
+        <div class="header-actions">
+          <button class="btn btn-ghost btn-sm" onclick="loadCPU()">↻ Refresh</button>
+          <button class="btn btn-ghost btn-sm" onclick="openActivityMonitor()">📊 Activity Monitor</button>
+        </div>
+      </div>
+      <div id="cpu-notice"></div>
+      <div class="grid-2">
+        <div class="card" style="text-align:center;padding:28px 20px">
+          <div id="cpu-gauge" style="display:flex;justify-content:center;margin-bottom:14px"><div class="skel" style="width:150px;height:150px;border-radius:50%"></div></div>
+          <div id="cpu-gauge-sub" style="font-size:13px;color:var(--muted);margin-bottom:16px">Loading…</div>
+          <div style="font-size:11px;color:var(--muted)">Read-only monitoring. No process killing is performed.</div>
+        </div>
+        <div class="card">
+          <div class="card-title">Performance Guidance</div>
+          <div id="cpu-advice"><div class="skel" style="height:200px;border-radius:8px"></div></div>
+        </div>
+      </div>
+      <div class="card"><div class="card-title">Top CPU Consumers</div><div id="cpu-processes"><div class="skel" style="height:220px;border-radius:8px"></div></div></div>
     </div>
 
     <!-- RAM -->
@@ -162,7 +208,8 @@ body{font-family:-apple-system,'SF Pro Display','Helvetica Neue',sans-serif}
           <div id="ram-gauge" style="display:flex;justify-content:center;margin-bottom:14px"><div class="skel" style="width:150px;height:150px;border-radius:50%"></div></div>
           <div id="ram-gauge-sub" style="font-size:13px;color:var(--muted);margin-bottom:16px">Loading…</div>
           <button class="btn btn-primary" id="free-ram-btn" onclick="freeRAM()" style="width:100%;justify-content:center">⚡ Free Inactive RAM</button>
-          <div style="font-size:11px;color:var(--muted);margin-top:10px">Uses <code>purge</code> — requires admin password</div>
+          <button class="btn btn-ghost" id="deep-ram-btn" onclick="deepCleanRAM()" style="width:100%;justify-content:center;margin-top:8px">🧹 Deep Clean RAM (Safe)</button>
+          <div style="font-size:11px;color:var(--muted);margin-top:10px">Uses <code>purge</code> — may ask once per session for admin access</div>
         </div>
         <div class="card"><div class="card-title">Memory Breakdown</div><div id="ram-breakdown"><div class="skel" style="height:200px;border-radius:8px"></div></div></div>
       </div>
@@ -237,13 +284,14 @@ console.log('API ready:', bridge.arch);
 console.log('✅ API bridge loaded, arch:', bridge.arch);
 
 // ── Nav ───────────────────────────────────────────────────────────────────────
-const loaders = {dashboard:loadDashboard,ram:loadRAM,disk:loadDisk,uninstall:loadApps,startup:loadStartup,privacy:buildPrivacy};
+const loaders = {dashboard:loadDashboard,cpu:loadCPU,ram:loadRAM,disk:loadDisk,uninstall:loadApps,startup:loadStartup,privacy:buildPrivacy};
 function nav(id){
   document.querySelectorAll('.page').forEach(p=>p.classList.remove('active'));
   document.querySelectorAll('.nav-item').forEach(n=>n.classList.remove('active'));
   document.getElementById('page-'+id).classList.add('active');
   document.querySelector('.nav-item[data-page="'+id+'"]').classList.add('active');
   if(loaders[id]) loaders[id]();
+  scheduleMonitorRefresh();
 }
 document.querySelectorAll('.nav-item').forEach(el=>el.addEventListener('click',()=>nav(el.dataset.page)));
 
@@ -255,8 +303,12 @@ function fmt(b){
   return (b/1073741824).toFixed(2)+' GB';
 }
 function rC(p){return p>85?'var(--danger)':p>65?'var(--warn)':'var(--success)';}
+function cC(p){return p>80?'var(--danger)':p>50?'var(--warn)':'var(--success)';}
+function cL(p){return p>80?'High':p>50?'Moderate':'Healthy';}
 function dC(p){return p>90?'var(--danger)':p>75?'var(--warn)':'var(--accent)';}
 function iC(i){return i==='High'?'var(--danger)':i==='Medium'?'var(--warn)':'var(--success)';}
+function pC(level){return level==='critical'?'var(--danger)':level==='warning'?'var(--warn)':'var(--success)';}
+function pL(level){return level==='critical'?'Critical':level==='warning'?'Warning':'Normal';}
 function gauge(pct,color,label,size){
   size=size||150;
   const r=58,cx=size/2,cy=size/2,circ=2*Math.PI*r,off=circ-(pct/100)*circ;
@@ -276,14 +328,13 @@ function notice(elId,type,icon,title,sub){
 // ── Dashboard ─────────────────────────────────────────────────────────────────
 async function loadDashboard(){
   console.log('loadDashboard called');
-  var btn=document.getElementById('dash-refresh-btn');
-  if(btn){btn.disabled=true;btn.textContent='↻ Loading…';}
   try{
     var info=await bridge.getSystemInfo();
     document.getElementById('dash-sub').textContent=info.hostname+' · macOS · '+bridge.arch;
-    var r=info.ram,d=info.disk,rc=rC(r.usedPct),dc=dC(d.pct);
+    var r=info.ram,d=info.disk,pressure=r.pressure||{level:'normal'},rc=pC(pressure.level),dc=dC(d.pct);
     document.getElementById('dash-stats').innerHTML=
-      statCard('🧠 RAM Usage',r.usedPct+'%',fmt(r.used)+' of '+fmt(r.total),rc)+
+      statCard('🧠 RAM Usage',r.usedPct+'%',fmt(r.used)+' of '+fmt(r.total)+' · Pressure: '+pL(pressure.level),rc)+
+      statCard('🧮 CPU Usage',info.cpu.pct+'%','Load: '+info.cpu.load1.toFixed(2)+' / '+info.cpu.load5.toFixed(2),cC(info.cpu.pct))+
       statCard('💾 Disk Usage',d.pct+'%',fmt(d.used)+' of '+fmt(d.total),dc)+
       statCard('🔋 Battery',info.battery?info.battery.pct+'%':'N/A',info.battery?(info.battery.charging?'⚡ Charging':'🔋 On battery'):'Desktop Mac','var(--accent3)');
     document.getElementById('dash-ram-card').innerHTML=
@@ -300,7 +351,6 @@ async function loadDashboard(){
       '<div style="display:flex;justify-content:space-between;font-size:13px;margin-bottom:14px"><span style="color:var(--muted)">Free</span><span style="font-weight:600;color:var(--success)">'+fmt(d.free)+'</span></div>'+
       '<button class="btn btn-ghost btn-sm" onclick="nav(\'disk\')" style="width:100%;justify-content:center">🔍 Scan &amp; Clean Disk →</button>';
   }catch(e){notice('dash-notice','error','⚠️','Could not load system info',e.message);}
-  if(btn){btn.disabled=false;btn.textContent='↻ Refresh';}
 }
 function statCard(title,val,sub,color){
   return '<div class="card" style="position:relative;overflow:hidden"><div style="position:absolute;top:-20px;right:-20px;width:90px;height:90px;border-radius:50%;background:'+color+'0f"></div><div class="card-title">'+title+'</div><div style="font-size:30px;font-weight:800;color:'+color+';letter-spacing:-1px;margin-bottom:4px">'+val+'</div><div style="font-size:12px;color:var(--muted)">'+sub+'</div></div>';
@@ -316,13 +366,53 @@ async function runScan(){
   notice('dash-notice','success','✅','Scan complete','Your Mac has been analyzed. Use the tools in the sidebar to clean and optimize.');
 }
 
+// ── CPU ───────────────────────────────────────────────────────────────────────
+async function loadCPU(){
+  try{
+    var info=await bridge.getSystemInfo(),procs=await bridge.getCpuProcesses();
+    var cpu=info.cpu,color=cC(cpu.pct);
+    document.getElementById('cpu-gauge').innerHTML=gauge(cpu.pct,color,'CPU Used',160);
+    document.getElementById('cpu-gauge-sub').innerHTML=
+      'Now: '+cpu.pct+'% · '+cL(cpu.pct)+' load'+
+      '<br><span style="font-size:11px;color:var(--muted)">Load avg (1m/5m/15m): '+cpu.load1.toFixed(2)+' / '+cpu.load5.toFixed(2)+' / '+cpu.load15.toFixed(2)+' on '+cpu.cores+' cores</span>';
+
+    var guidance=cpu.pct>80
+      ? ['Close heavy browser tabs and unused desktop apps.','Check top CPU consumers below and quit unnecessary ones.','Leave indexing/updates to finish, then re-check CPU.']
+      : cpu.pct>50
+        ? ['CPU is moderately busy; this is normal during active work.','If fans are loud, close non-essential background apps.','Use Activity Monitor for long-running spikes.']
+        : ['CPU usage is healthy.','No optimization action needed right now.','Keep Startup Items lean for best boot performance.'];
+    document.getElementById('cpu-advice').innerHTML=guidance.map(function(t,i){
+      return '<div style="padding:10px 0;border-bottom:'+(i===guidance.length-1?'none':'1px solid var(--border)')+';font-size:13px;color:var(--muted)">'+(i+1)+'. '+t+'</div>';
+    }).join('');
+
+    document.getElementById('cpu-processes').innerHTML=procs.length?
+      procs.map(function(p,i){
+        var width=Math.min(100,(p.cpu/Math.max(procs[0].cpu,1))*100);
+        return '<div class="app-row"><div style="width:22px;font-size:12px;color:var(--muted);text-align:right">'+(i+1)+'</div>'+
+          '<div class="app-info"><div class="app-name">'+p.name+'</div><div class="app-meta monospace">PID '+p.pid+'</div>'+
+          '<div style="margin-top:4px"><div class="bar-wrap" style="height:4px"><div class="bar-fill" style="width:'+width+'%;background:'+cC(p.cpu)+'"></div></div></div></div>'+
+          '<span style="font-size:13px;font-weight:700;color:'+cC(p.cpu)+'">'+p.cpu.toFixed(1)+'%</span></div>';
+      }).join(''):
+      '<div class="empty"><span style="font-size:36px;display:block;margin-bottom:8px">✅</span>No high CPU processes right now</div>';
+  }catch(e){notice('cpu-notice','error','⚠️','Failed to load CPU info',e.message);}
+}
+
+async function openActivityMonitor(){
+  var res=await bridge.openActivityMonitor();
+  if(!res.success) notice('cpu-notice','error','⚠️','Could not open Activity Monitor',res.error||'Unknown error');
+}
+
 // ── RAM ───────────────────────────────────────────────────────────────────────
+var ramProcs=[];
 async function loadRAM(){
   try{
     var info=await bridge.getSystemInfo(),procs=await bridge.getRamProcesses();
-    var r=info.ram,color=rC(r.usedPct);
+    ramProcs=procs;
+    var r=info.ram,pressure=r.pressure||{level:'normal'},color=pC(pressure.level);
     document.getElementById('ram-gauge').innerHTML=gauge(r.usedPct,color,'Memory Used',160);
-    document.getElementById('ram-gauge-sub').innerHTML=fmt(r.used)+' used of '+fmt(r.total)+'<br><span style="font-size:11px">'+(r.usedPct<50?'✅ Healthy':r.usedPct<75?'⚠️ Moderate pressure':'🔴 High pressure')+'</span>';
+    document.getElementById('ram-gauge-sub').innerHTML=
+      fmt(r.used)+' used of '+fmt(r.total)+
+      '<br><span style="font-size:11px;color:'+color+'">Memory Pressure: '+pL(pressure.level)+(pressure.freePct!==null?' ('+pressure.freePct+'% free)':'')+'</span>';
     document.getElementById('ram-breakdown').innerHTML=
       [{l:'Wired Memory',d:'Reserved by macOS',b:r.wired,c:'#5b8af5'},
        {l:'Active Memory',d:'Used by apps',b:r.active,c:'var(--warn)'},
@@ -331,7 +421,7 @@ async function loadRAM(){
        {l:'Free',d:'Immediately available',b:r.free,c:'var(--success)'}]
       .map(m=>'<div style="margin-bottom:12px"><div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:4px"><div><div style="font-size:13px;font-weight:500">'+m.l+'</div><div style="font-size:11px;color:var(--muted)">'+m.d+'</div></div><span style="font-size:13px;font-weight:600;color:'+m.c+';margin-left:8px">'+fmt(m.b)+'</span></div><div class="bar-wrap"><div class="bar-fill" style="width:'+Math.round(m.b/r.total*100)+'%;background:'+m.c+'"></div></div></div>').join('');
     document.getElementById('ram-processes').innerHTML=procs.length?
-      procs.map((p,i)=>'<div class="app-row"><div style="width:22px;font-size:12px;color:var(--muted);text-align:right">'+(i+1)+'</div><div class="app-info"><div class="app-name">'+p.name+'</div><div style="margin-top:4px"><div class="bar-wrap" style="height:4px"><div class="bar-fill" style="width:'+Math.round(p.mem/procs[0].mem*100)+'%;background:var(--accent)"></div></div></div></div><span style="font-size:13px;font-weight:600;color:var(--accent)">'+p.memStr+'</span></div>').join(''):
+      procs.map((p,i)=>'<div class="app-row"><div style="width:22px;font-size:12px;color:var(--muted);text-align:right">'+(i+1)+'</div><div class="app-info"><div class="app-name">'+p.name+'</div><div class="app-meta monospace">PID '+p.pid+(p.canQuit?' · user app':' · protected')+'</div><div style="margin-top:4px"><div class="bar-wrap" style="height:4px"><div class="bar-fill" style="width:'+Math.round(p.mem/procs[0].mem*100)+'%;background:var(--accent)"></div></div></div></div><span style="font-size:13px;font-weight:600;color:var(--accent)">'+p.memStr+'</span>'+(p.canQuit?'<button class="btn btn-ghost btn-sm" id="qbtn-'+p.pid+'" onclick="quitRamProcess('+p.pid+')">Quit</button>':'')+'</div>').join(''):
       '<div class="empty"><span style="font-size:36px;display:block;margin-bottom:8px">📊</span>No process data</div>';
   }catch(e){notice('ram-notice','error','⚠️','Failed to load RAM info',e.message);}
 }
@@ -340,8 +430,56 @@ async function freeRAM(){
   btn.disabled=true;btn.innerHTML='<span class="spin">⟳</span> Freeing RAM…';
   var res=await bridge.freeRAM();
   btn.disabled=false;btn.innerHTML='⚡ Free Inactive RAM';
-  if(res.success){notice('ram-notice','success','✅','RAM freed successfully!','Inactive memory has been purged.');loadRAM();}
+  if(res.success){
+    var usedDrop=(res.before&&res.after)?Math.max(0,res.before.used-res.after.used):0;
+    var immediate=res.immediateFreeGainBytes||res.reclaimedBytes||usedDrop;
+    var stabilized=res.stabilizedFreeGainBytes!==undefined?res.stabilizedFreeGainBytes:immediate;
+    var pressureText=(res.beforePressure&&res.stabilizedPressure)?('Pressure: '+pL(res.beforePressure.level)+' → '+pL(res.stabilizedPressure.level)):'';
+    notice('ram-notice','success','✅','RAM cleanup complete','Immediate: '+fmt(immediate)+' · Stabilized (~12s): '+fmt(stabilized)+(pressureText?' · '+pressureText:''));
+    loadRAM();
+  }
   else notice('ram-notice','error','⚠️','Could not free RAM',res.error||'Try running with admin privileges.');
+}
+
+async function quitRamProcess(pid){
+  var btn=document.getElementById('qbtn-'+pid);
+  if(btn){btn.disabled=true;btn.innerHTML='<span class="spin">⟳</span>';}
+  var res=await bridge.quitProcess(pid);
+  if(!res.success){
+    if(btn){btn.disabled=false;btn.textContent='Quit';}
+    notice('ram-notice','error','⚠️','Could not quit process',res.error||'Operation failed');
+    return;
+  }
+  notice('ram-notice','success','✅','Process closed','Refreshing memory stats...');
+  loadRAM();
+  loadDashboard();
+}
+
+async function deepCleanRAM(){
+  var candidates=ramProcs.filter(function(p){return p.canQuit;}).slice(0,3);
+  var names=candidates.map(function(p){return p.name;});
+  var msg='Deep Clean will quit up to 3 high-memory user apps and run RAM purge.\\n\\n';
+  msg+='Candidates: '+(names.length?names.join(', '):'None (only purge will run)')+'\\n\\nContinue?';
+  if(!window.confirm(msg)) return;
+
+  var btn=document.getElementById('deep-ram-btn');
+  if(btn){btn.disabled=true;btn.innerHTML='<span class="spin">⟳</span> Deep Cleaning…';}
+  var res=await bridge.deepCleanRAM(candidates.map(function(p){return p.pid;}));
+  if(btn){btn.disabled=false;btn.innerHTML='🧹 Deep Clean RAM (Safe)';}
+
+  if(!res.success){
+    notice('ram-notice','error','⚠️','Deep clean failed',res.error||'Operation failed');
+    return;
+  }
+
+  var usedDrop=(res.before&&res.after)?Math.max(0,res.before.used-res.after.used):0;
+  var immediate=res.immediateFreeGainBytes||res.reclaimedBytes||usedDrop;
+  var stabilized=res.stabilizedFreeGainBytes!==undefined?res.stabilizedFreeGainBytes:immediate;
+  var quitCount=(res.stopped||[]).length;
+  var pressureText=(res.beforePressure&&res.stabilizedPressure)?('Pressure: '+pL(res.beforePressure.level)+' → '+pL(res.stabilizedPressure.level)):'';
+  notice('ram-notice','success','✅','Deep RAM clean complete','Immediate: '+fmt(immediate)+' · Stabilized (~12s): '+fmt(stabilized)+' · Quit '+quitCount+' app'+(quitCount===1?'':'s')+(pressureText?' · '+pressureText:''));
+  loadRAM();
+  loadDashboard();
 }
 
 // ── Disk ──────────────────────────────────────────────────────────────────────
@@ -529,7 +667,79 @@ async function clearAllPrivacy(){
 console.log('MacCleaner renderer initializing...');
 buildPrivacy();
 loadDashboard().catch(function(e){ console.error('Dashboard load failed:', e); });
-setInterval(function(){ loadDashboard().catch(function(){}); }, 15000);
+bridge.getAppVersion().then(function(v){
+  var el=document.getElementById('app-version');
+  if(el && v) el.textContent='MacCleaner v'+v;
+}).catch(function(){});
+
+var monitorTimer=null;
+var monitorBusy=false;
+var refreshProfile='balanced';
+async function refreshActivePage(){
+  var active=document.querySelector('.page.active');
+  if(!active) return;
+  var id=active.id.replace('page-','');
+  if(loaders[id]) await loaders[id]();
+}
+function getMonitorRefreshMs(){
+  var active=document.querySelector('.page.active');
+  if(!active) return 30000;
+  var id=active.id.replace('page-','');
+  var isMonitorPage=(id==='dashboard' || id==='ram' || id==='cpu');
+  var schedule=refreshProfile==='real-time'
+    ? {focused:3000,blurred:6000,hidden:12000,other:18000}
+    : refreshProfile==='power-saver'
+      ? {focused:12000,blurred:20000,hidden:30000,other:35000}
+      : {focused:5000,blurred:12000,hidden:30000,other:30000};
+  if(!isMonitorPage) return schedule.other;
+  if(document.hidden) return schedule.hidden;
+  if(document.hasFocus()) return schedule.focused;
+  return schedule.blurred;
+}
+async function tickMonitor(){
+  if(monitorBusy) return;
+  var active=document.querySelector('.page.active');
+  if(!active) return;
+  var id=active.id.replace('page-','');
+  if(id==='dashboard' || id==='ram' || id==='cpu'){
+    monitorBusy=true;
+    try{ await loaders[id](); }catch{}
+    monitorBusy=false;
+  }
+}
+function scheduleMonitorRefresh(){
+  if(monitorTimer) clearTimeout(monitorTimer);
+  monitorTimer=setTimeout(async function(){
+    await tickMonitor();
+    scheduleMonitorRefresh();
+  }, getMonitorRefreshMs());
+}
+async function applyRefreshProfile(profile){
+  refreshProfile=profile||'balanced';
+  scheduleMonitorRefresh();
+}
+async function initRefreshSettings(){
+  var sel=document.getElementById('refresh-mode');
+  if(!sel) return;
+  try{
+    var s=await bridge.getSettings();
+    refreshProfile=s.refreshProfile||'balanced';
+    sel.value=refreshProfile;
+  }catch{}
+  sel.addEventListener('change', async function(){
+    try{
+      var res=await bridge.setRefreshProfile(sel.value);
+      await applyRefreshProfile(res.refreshProfile||sel.value);
+      notice('dash-notice','success','⚙️','Refresh mode updated','Now using '+(res.refreshProfile||sel.value)+' mode');
+    }catch(e){
+      notice('dash-notice','error','⚠️','Could not update refresh mode',e.message);
+    }
+  });
+}
+document.addEventListener('visibilitychange', scheduleMonitorRefresh);
+window.addEventListener('focus', scheduleMonitorRefresh);
+window.addEventListener('blur', scheduleMonitorRefresh);
+initRefreshSettings().finally(function(){ scheduleMonitorRefresh(); });
 </script>
 </body>
 </html>

@@ -1,7 +1,9 @@
 {
   "name": "mac-cleaner",
-  "version": "1.0.0",
+  "version": "1.2.0",
   "description": "macOS System Cleaner & Optimizer",
+  "author": "Gbenga Orenuga",
+  "license": "MIT",
   "main": "main.js",
   "scripts": {
     "start": "electron .",
@@ -11,7 +13,7 @@
   "build": {
     "appId": "com.maccleaner.app",
     "productName": "MacCleaner",
-    "copyright": "Copyright © 2024 MacCleaner",
+    "copyright": "Copyright © 2026 MacCleaner",
     "mac": {
       "category": "public.app-category.utilities",
       "icon": "assets/icon.icns",

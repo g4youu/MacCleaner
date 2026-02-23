@@ -1,7 +1,7 @@
 node_modules/
 dist/
+.bin/
 .DS_Store
 *.log
 npm-debug.log*
 yarn-error.log*
-
