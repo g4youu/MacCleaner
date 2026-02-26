@@ -19,8 +19,16 @@ MacCleaner is a macOS utility app built with Electron to inspect and clean commo
 - Node.js 18+
 - npm 9+
 
+## Install from DMG
+
+1. Download the DMG of your MAC type from the release, and open the DMG file.
+2. Drag `MacCleaner` into `Applications`.
+3. First launch may require allowing the app in `System Settings -> Privacy & Security`.
+
 ## Local Development
 
+Download the code
+cd to the code folder
 ```bash
 npm install
 npm start
@@ -36,12 +44,6 @@ Artifacts are generated in `dist/`:
 
 - `MacCleaner-<version>-arm64.dmg`
 - `MacCleaner-<version>.dmg` (x64)
-
-## Install from DMG
-
-1. Open the DMG file.
-2. Drag `MacCleaner` into `Applications`.
-3. First launch may require allowing the app in `System Settings -> Privacy & Security`.
 
 ## GitHub Release Flow
 
