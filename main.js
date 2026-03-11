@@ -11,27 +11,356 @@ let mainWindow;
 let tray = null;
 let trayInterval = null;
 let isSuspended = false;
-const DEFAULT_SETTINGS = { refreshProfile: 'balanced' };
+let autoCareTimer = null;
+let autoCareStatus = {
+  running: false,
+  lastRunAt: null,
+  nextRunAt: null,
+  runCount: 0,
+  lastError: null,
+  lastResult: null,
+};
+const DEFAULT_SETTINGS = {
+  refreshProfile: 'balanced',
+  autoCare: {
+    enabled: false,
+    intervalMinutes: 30,
+    ramCleanOnPressure: false,
+    pressureTrigger: 'critical',
+    minInactiveGb: 2,
+    allowOnBattery: false,
+  },
+};
 let settings = { ...DEFAULT_SETTINGS };
 let protectionCache = { ts: 0, report: null };
+const MAX_CLEANUP_HISTORY_ENTRIES = 120;
+const MAX_HISTORY_FAILED_ITEMS = 200;
+const MAX_HISTORY_ITEMS_PER_ENTRY = 6000;
 
 function getSettingsPath() {
   return path.join(app.getPath('userData'), 'settings.json');
 }
 
+function getCleanupHistoryPath() {
+  return path.join(app.getPath('userData'), 'cleanup-history.json');
+}
+
+function loadCleanupHistoryEntries() {
+  try {
+    const p = getCleanupHistoryPath();
+    if (!fs.existsSync(p)) return [];
+    const parsed = JSON.parse(fs.readFileSync(p, 'utf8'));
+    if (Array.isArray(parsed)) return parsed;
+    if (parsed && Array.isArray(parsed.entries)) return parsed.entries;
+    return [];
+  } catch {
+    return [];
+  }
+}
+
+function saveCleanupHistoryEntries(entries) {
+  try {
+    const trimmed = Array.isArray(entries) ? entries.slice(0, MAX_CLEANUP_HISTORY_ENTRIES) : [];
+    fs.writeFileSync(getCleanupHistoryPath(), JSON.stringify({
+      version: 1,
+      updatedAt: new Date().toISOString(),
+      entries: trimmed,
+    }, null, 2));
+  } catch {}
+}
+
+function appendCleanupHistoryEntry(entry) {
+  const entries = loadCleanupHistoryEntries();
+  entries.unshift(entry);
+  saveCleanupHistoryEntries(entries);
+  return entry;
+}
+
+function getTrashDirectory() {
+  return path.join(os.homedir(), '.Trash');
+}
+
+function listTrashEntries() {
+  const trashDir = getTrashDirectory();
+  if (!fs.existsSync(trashDir)) return [];
+  let names = [];
+  try {
+    names = fs.readdirSync(trashDir);
+  } catch {
+    return [];
+  }
+  const out = [];
+  for (const name of names) {
+    const fullPath = path.join(trashDir, name);
+    try {
+      const st = fs.statSync(fullPath);
+      out.push({ path: fullPath, name, mtimeMs: st.mtimeMs });
+    } catch {}
+  }
+  return out;
+}
+
+function detectMovedTrashPath(beforePaths, originalPath) {
+  const base = path.basename(originalPath);
+  const after = listTrashEntries();
+  const fresh = after.filter(item => !beforePaths.has(item.path));
+  if (!fresh.length) return null;
+  const exact = fresh.find(item => item.name === base);
+  if (exact) return exact.path;
+  const stem = base.replace(/\.[^/.]+$/, '');
+  const prefix = fresh
+    .filter(item => item.name.startsWith(stem))
+    .sort((a, b) => b.mtimeMs - a.mtimeMs);
+  if (prefix.length) return prefix[0].path;
+  fresh.sort((a, b) => b.mtimeMs - a.mtimeMs);
+  return fresh[0].path;
+}
+
+function makeCleanupHistoryEntry({
+  module = 'cleanup',
+  action = 'Move items to Trash',
+  dryRun = false,
+  candidateCount = 0,
+  movedItems = [],
+  failed = [],
+  meta = {},
+}) {
+  const id = `${Date.now().toString(36)}-${crypto.randomBytes(4).toString('hex')}`;
+  const items = movedItems.slice(0, MAX_HISTORY_ITEMS_PER_ENTRY).map(item => ({
+    originalPath: item.originalPath,
+    trashPath: item.trashPath || null,
+    size: item.size || 0,
+    restoredAt: null,
+    restoreError: null,
+  }));
+  const bytes = movedItems.reduce((acc, item) => acc + (item.size || 0), 0);
+  const restorableCount = items.length;
+  return {
+    id,
+    createdAt: new Date().toISOString(),
+    module,
+    action,
+    dryRun: !!dryRun,
+    candidateCount: Number(candidateCount) || (movedItems.length + failed.length),
+    movedCount: movedItems.length,
+    bytes,
+    failedCount: failed.length,
+    restorableCount,
+    restoredCount: 0,
+    restoreFailedCount: 0,
+    restoreComplete: false,
+    truncated: movedItems.length > MAX_HISTORY_ITEMS_PER_ENTRY,
+    items,
+    failed: failed.slice(0, MAX_HISTORY_FAILED_ITEMS),
+    meta: meta || {},
+  };
+}
+
+function escapeAppleScriptString(value) {
+  return String(value || '')
+    .replace(/\\/g, '\\\\')
+    .replace(/"/g, '\\"');
+}
+
+function putBackFromTrash(trashPath) {
+  return new Promise((resolve) => {
+    const script = `tell application "Finder" to put back (POSIX file "${escapeAppleScriptString(trashPath)}" as alias)`;
+    const child = spawn('osascript', ['-e', script], { stdio: ['ignore', 'pipe', 'pipe'] });
+    let stderr = '';
+    child.stderr.on('data', chunk => { stderr += chunk.toString(); });
+    child.on('error', (e) => resolve({ success: false, error: e.message }));
+    child.on('close', (code) => {
+      if (code === 0) resolve({ success: true });
+      else resolve({ success: false, error: stderr.trim() || `osascript exited with code ${code}` });
+    });
+  });
+}
+
+function renameTrashItemBack(trashPath, originalPath) {
+  try {
+    if (!fs.existsSync(trashPath)) return { success: false, error: 'Trash item not found' };
+    if (fs.existsSync(originalPath)) return { success: false, error: 'Original path already exists' };
+    fs.mkdirSync(path.dirname(originalPath), { recursive: true });
+    fs.renameSync(trashPath, originalPath);
+    return { success: true };
+  } catch (e) {
+    return { success: false, error: e.message || 'Rename fallback failed' };
+  }
+}
+
+function findTrashPathForHistoryItem(item) {
+  if (item && item.trashPath && fs.existsSync(item.trashPath)) return item.trashPath;
+  const originalPath = item && item.originalPath ? item.originalPath : '';
+  const base = path.basename(originalPath);
+  if (!base) return null;
+  const entries = listTrashEntries()
+    .filter(entry => entry.name === base || entry.name.startsWith(base.replace(/\.[^/.]+$/, '')))
+    .sort((a, b) => b.mtimeMs - a.mtimeMs);
+  return entries.length ? entries[0].path : null;
+}
+
+async function restoreCleanupEntryById(entryId) {
+  const id = String(entryId || '').trim();
+  if (!id) return { success: false, error: 'Entry id is required' };
+  const entries = loadCleanupHistoryEntries();
+  const index = entries.findIndex(entry => entry.id === id);
+  if (index < 0) return { success: false, error: 'Cleanup history entry not found' };
+
+  const entry = entries[index];
+  const items = Array.isArray(entry.items) ? entry.items : [];
+  if (!items.length) {
+    entry.restoreComplete = true;
+    entry.lastRestoreAt = new Date().toISOString();
+    entries[index] = entry;
+    saveCleanupHistoryEntries(entries);
+    return { success: true, restoredCount: 0, failedCount: 0, entry };
+  }
+
+  let restoredCount = 0;
+  let failedCount = 0;
+
+  for (const item of items) {
+    if (item.restoredAt) continue;
+    const sourceTrashPath = findTrashPathForHistoryItem(item);
+    if (!sourceTrashPath) {
+      item.restoreError = 'Trash item no longer available';
+      failedCount += 1;
+      continue;
+    }
+
+    let restored = await putBackFromTrash(sourceTrashPath);
+    if (!restored.success) {
+      restored = renameTrashItemBack(sourceTrashPath, item.originalPath || '');
+    }
+
+    if (restored.success) {
+      item.restoredAt = new Date().toISOString();
+      item.restoreError = null;
+      item.trashPath = sourceTrashPath;
+      restoredCount += 1;
+    } else {
+      item.restoreError = restored.error || 'Restore failed';
+      failedCount += 1;
+    }
+  }
+
+  entry.restoredCount = items.filter(item => !!item.restoredAt).length;
+  entry.restoreFailedCount = items.filter(item => !!item.restoreError && !item.restoredAt).length;
+  entry.restoreComplete = entry.restoredCount >= (entry.restorableCount || 0);
+  entry.lastRestoreAt = new Date().toISOString();
+  entries[index] = entry;
+  saveCleanupHistoryEntries(entries);
+
+  return {
+    success: failedCount === 0,
+    restoredCount,
+    failedCount,
+    entry,
+  };
+}
+
+async function trashPathsWithSafety(rawTargets, options = {}) {
+  const targets = Array.isArray(rawTargets) ? rawTargets : [];
+  const allowPath = typeof options.allowPath === 'function' ? options.allowPath : isHomePath;
+  const dryRun = !!options.dryRun;
+  const recordHistory = options.recordHistory !== false && !dryRun;
+  const movedItems = [];
+  const failed = [];
+  let previewBytes = 0;
+
+  for (const rawPath of targets) {
+    const targetPath = path.resolve(String(rawPath || ''));
+    if (!targetPath) continue;
+    if (!allowPath(targetPath)) {
+      failed.push({ path: targetPath, error: 'Path outside allowed cleanup scope' });
+      continue;
+    }
+    if (!fs.existsSync(targetPath)) {
+      failed.push({ path: targetPath, error: 'Path not found' });
+      continue;
+    }
+
+    try {
+      const st = fs.statSync(targetPath);
+      if (!st.isFile() && !st.isDirectory()) {
+        failed.push({ path: targetPath, error: 'Only files and folders can be moved to Trash' });
+        continue;
+      }
+      const size = pathSize(targetPath);
+      previewBytes += size;
+
+      if (dryRun) {
+        movedItems.push({
+          originalPath: targetPath,
+          trashPath: null,
+          size,
+        });
+        continue;
+      }
+
+      const beforeTrashSet = new Set(listTrashEntries().map(entry => entry.path));
+      await shell.trashItem(targetPath);
+      const trashPath = detectMovedTrashPath(beforeTrashSet, targetPath);
+      movedItems.push({
+        originalPath: targetPath,
+        trashPath: trashPath || null,
+        size,
+      });
+    } catch (e) {
+      failed.push({ path: targetPath, error: e.message || 'Failed to move to Trash' });
+    }
+  }
+
+  let historyId = null;
+  if (recordHistory && movedItems.length) {
+    const historyEntry = makeCleanupHistoryEntry({
+      module: options.module || 'cleanup',
+      action: options.action || 'Move items to Trash',
+      dryRun: false,
+      candidateCount: movedItems.length + failed.length,
+      movedItems,
+      failed,
+      meta: options.meta || {},
+    });
+    appendCleanupHistoryEntry(historyEntry);
+    historyId = historyEntry.id;
+  }
+
+  const trashed = dryRun ? [] : movedItems.map(item => item.originalPath);
+  const trashedBytes = dryRun ? 0 : movedItems.reduce((acc, item) => acc + (item.size || 0), 0);
+
+  return {
+    success: failed.length === 0,
+    dryRun,
+    candidateCount: movedItems.length + failed.length,
+    previewCount: movedItems.length,
+    previewBytes,
+    trashed,
+    trashedCount: trashed.length,
+    trashedBytes,
+    failed,
+    restorableCount: movedItems.filter(item => !!item.trashPath).length,
+    historyId,
+  };
+}
+
 function loadSettings() {
   try {
     const p = getSettingsPath();
-    if (!fs.existsSync(p)) return;
+    if (!fs.existsSync(p)) {
+      settings = normalizeSettings({});
+      return;
+    }
     const parsed = JSON.parse(fs.readFileSync(p, 'utf8'));
-    settings = { ...DEFAULT_SETTINGS, ...parsed };
+    settings = normalizeSettings(parsed);
   } catch {
-    settings = { ...DEFAULT_SETTINGS };
+    settings = normalizeSettings({});
   }
 }
 
 function saveSettings() {
   try {
+    settings = normalizeSettings(settings);
     fs.writeFileSync(getSettingsPath(), JSON.stringify(settings, null, 2));
   } catch {}
 }
@@ -41,8 +370,36 @@ function normalizeRefreshProfile(value) {
   return DEFAULT_SETTINGS.refreshProfile;
 }
 
+function normalizeAutoCareSettings(value) {
+  const v = value && typeof value === 'object' ? value : {};
+  const intervalMinutes = Number(v.intervalMinutes);
+  const minInactiveGb = Number(v.minInactiveGb);
+  return {
+    enabled: !!v.enabled,
+    intervalMinutes: Number.isFinite(intervalMinutes) ? Math.max(5, Math.min(240, Math.round(intervalMinutes))) : DEFAULT_SETTINGS.autoCare.intervalMinutes,
+    ramCleanOnPressure: !!v.ramCleanOnPressure,
+    pressureTrigger: v.pressureTrigger === 'warning' ? 'warning' : 'critical',
+    minInactiveGb: Number.isFinite(minInactiveGb) ? Math.max(0.5, Math.min(8, Math.round(minInactiveGb * 10) / 10)) : DEFAULT_SETTINGS.autoCare.minInactiveGb,
+    allowOnBattery: !!v.allowOnBattery,
+  };
+}
+
+function normalizeSettings(value) {
+  const v = value && typeof value === 'object' ? value : {};
+  return {
+    refreshProfile: normalizeRefreshProfile(v.refreshProfile),
+    autoCare: normalizeAutoCareSettings(v.autoCare),
+  };
+}
+
 function getRefreshProfile() {
-  return normalizeRefreshProfile(settings.refreshProfile);
+  settings.refreshProfile = normalizeRefreshProfile(settings.refreshProfile);
+  return settings.refreshProfile;
+}
+
+function getAutoCareSettings() {
+  settings.autoCare = normalizeAutoCareSettings(settings.autoCare);
+  return settings.autoCare;
 }
 
 function createWindow() {
@@ -101,14 +458,17 @@ app.whenReady().then(() => {
   loadSettings();
   createWindow();
   createTray();
+  resetAutoCareScheduler(false);
   powerMonitor.on('suspend', () => {
     isSuspended = true;
     resetTrayRefreshTimer();
+    stopAutoCareScheduler();
   });
   powerMonitor.on('resume', () => {
     isSuspended = false;
     updateTray();
     resetTrayRefreshTimer();
+    resetAutoCareScheduler(true);
   });
   app.on('activate', () => { if (BrowserWindow.getAllWindows().length === 0) createWindow(); });
 });
@@ -116,6 +476,7 @@ app.whenReady().then(() => {
 app.on('window-all-closed', () => { if (process.platform !== 'darwin') app.quit(); });
 app.on('before-quit', () => {
   if (trayInterval) clearInterval(trayInterval);
+  stopAutoCareScheduler();
 });
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -405,38 +766,37 @@ async function getCloudCleanupReport(options = {}) {
   };
 }
 
-async function cleanCloudProviderCache({ providerId, staleDays = 21, maxFiles = 1500 }) {
+async function cleanCloudProviderCache({
+  providerId,
+  staleDays = 21,
+  maxFiles = 1500,
+  dryRun = false,
+  recordHistory = true,
+}) {
   const report = await getCloudCleanupReport({ staleDays, maxFiles });
   if (!report.success) return report;
   const provider = (report.providers || []).find(p => p.id === providerId);
   if (!provider) return { success: false, error: 'Cloud provider not found' };
 
-  const trashed = [];
-  const failed = [];
-  for (const item of provider.staleCandidates) {
-    const targetPath = path.resolve(item.path);
-    if (!isHomePath(targetPath)) {
-      failed.push({ path: targetPath, error: 'Path outside home scope' });
-      continue;
+  const result = await trashPathsWithSafety(
+    (provider.staleCandidates || []).map(item => item.path),
+    {
+      dryRun: !!dryRun,
+      recordHistory,
+      module: 'cloud-trim',
+      action: `Cloud Trim · ${provider.name}`,
+      allowPath: isHomePath,
+      meta: {
+        providerId,
+        providerName: provider.name,
+        staleDays,
+      },
     }
-    if (!fs.existsSync(targetPath)) continue;
-    try {
-      await shell.trashItem(targetPath);
-      trashed.push(targetPath);
-    } catch (e) {
-      failed.push({ path: targetPath, error: e.message || 'Failed to move to Trash' });
-    }
-  }
+  );
 
   return {
-    success: failed.length === 0,
+    ...result,
     providerId,
-    trashedCount: trashed.length,
-    trashedBytes: provider.staleCandidates
-      .filter(c => trashed.includes(c.path))
-      .reduce((acc, c) => acc + (c.size || 0), 0),
-    trashed,
-    failed,
   };
 }
 
@@ -1079,6 +1439,210 @@ async function buildRamCleanupMetrics(before) {
   };
 }
 
+function getBatterySnapshot() {
+  const battOut = run('pmset -g batt');
+  const battMatch = battOut.match(/(\d+)%/);
+  const battPct = battMatch ? parseInt(battMatch[1], 10) : null;
+  if (battPct === null) return null;
+  const isCharging = battOut.includes('AC Power') || battOut.includes('charging');
+  return { pct: battPct, charging: isCharging };
+}
+
+function getSystemInfoSnapshot() {
+  const ram = getRamSnapshot();
+  const pressure = getMemoryPressure();
+
+  const cpuLoad = run("top -l 1 -n 0 | grep 'CPU usage'").trim();
+  const cpuMatch = cpuLoad.match(/(\d+\.?\d*)% user/);
+  const cpuPct = cpuMatch ? Math.round(parseFloat(cpuMatch[1])) : 0;
+  const load = os.loadavg();
+  const cores = os.cpus().length || 1;
+
+  const dfOut = run('df -k /').split('\n')[1]?.split(/\s+/) || [];
+  const diskTotal = parseInt(dfOut[1] || 0, 10) * 1024;
+  const diskUsed = parseInt(dfOut[2] || 0, 10) * 1024;
+  const diskFree = parseInt(dfOut[3] || 0, 10) * 1024;
+  const diskPct = diskTotal > 0 ? Math.round((diskUsed / diskTotal) * 100) : 0;
+
+  return {
+    ram: { ...ram, pressure },
+    cpu: {
+      pct: cpuPct,
+      load1: load[0],
+      load5: load[1],
+      load15: load[2],
+      cores,
+    },
+    disk: { total: diskTotal, used: diskUsed, free: diskFree, pct: diskPct },
+    battery: getBatterySnapshot(),
+    hostname: os.hostname(),
+    platform: process.arch,
+  };
+}
+
+function getAutoCareState() {
+  return {
+    settings: getAutoCareSettings(),
+    status: {
+      running: !!autoCareStatus.running,
+      lastRunAt: autoCareStatus.lastRunAt || null,
+      nextRunAt: autoCareStatus.nextRunAt || null,
+      runCount: Number(autoCareStatus.runCount || 0),
+      lastError: autoCareStatus.lastError || null,
+      lastResult: autoCareStatus.lastResult || null,
+    },
+  };
+}
+
+function stopAutoCareScheduler() {
+  if (autoCareTimer) {
+    clearTimeout(autoCareTimer);
+    autoCareTimer = null;
+  }
+  autoCareStatus.nextRunAt = null;
+}
+
+function getPressureRank(level) {
+  if (level === 'critical') return 2;
+  if (level === 'warning') return 1;
+  return 0;
+}
+
+async function runAutoCareOnce(trigger = 'scheduled') {
+  const cfg = getAutoCareSettings();
+  if (autoCareStatus.running) return { success: true, skipped: true, reason: 'already-running' };
+  if (trigger !== 'manual' && !cfg.enabled) return { success: true, skipped: true, reason: 'disabled' };
+  if (trigger !== 'manual' && isSuspended) return { success: true, skipped: true, reason: 'suspended' };
+
+  autoCareStatus.running = true;
+  autoCareStatus.lastError = null;
+  const startedAt = Date.now();
+  try {
+    const snapshot = getSystemInfoSnapshot();
+    const actions = [];
+
+    if (cfg.ramCleanOnPressure) {
+      const pressureLevel = (snapshot.ram.pressure && snapshot.ram.pressure.level) || 'normal';
+      const pressureRank = getPressureRank(pressureLevel);
+      const neededRank = cfg.pressureTrigger === 'warning' ? 1 : 2;
+      const inactiveGb = snapshot.ram.inactive / (1024 ** 3);
+      const blockedByBattery = !!(snapshot.battery && !snapshot.battery.charging && !cfg.allowOnBattery);
+
+      if (blockedByBattery) {
+        actions.push({
+          type: 'ram-clean',
+          status: 'skipped',
+          reason: 'on-battery',
+          pressureLevel,
+          inactiveGb: Number(inactiveGb.toFixed(2)),
+        });
+      } else if (pressureRank < neededRank) {
+        actions.push({
+          type: 'ram-clean',
+          status: 'skipped',
+          reason: 'pressure-below-threshold',
+          pressureLevel,
+          inactiveGb: Number(inactiveGb.toFixed(2)),
+        });
+      } else if (inactiveGb < cfg.minInactiveGb) {
+        actions.push({
+          type: 'ram-clean',
+          status: 'skipped',
+          reason: 'inactive-below-threshold',
+          pressureLevel,
+          inactiveGb: Number(inactiveGb.toFixed(2)),
+        });
+      } else {
+        const before = getRamSnapshot();
+        const beforePressure = getMemoryPressure();
+        let purgeResult = null;
+        if (trigger === 'manual') {
+          purgeResult = await purgeRamSmart();
+        } else {
+          if (isSudoAuthorized()) purgeResult = purgeRamWithSudoNoPrompt();
+          else purgeResult = { success: false, error: 'Sudo not authorized for non-interactive cleanup' };
+        }
+
+        if (!purgeResult || !purgeResult.success) {
+          actions.push({
+            type: 'ram-clean',
+            status: 'failed',
+            error: (purgeResult && purgeResult.error) || 'RAM cleanup failed',
+            pressureLevel,
+            inactiveGb: Number(inactiveGb.toFixed(2)),
+          });
+        } else {
+          const metrics = await buildRamCleanupMetrics(before);
+          updateTray();
+          actions.push({
+            type: 'ram-clean',
+            status: 'done',
+            method: trigger === 'manual' ? 'interactive' : 'cached-sudo',
+            immediateFreeGainBytes: metrics.immediateFreeGainBytes,
+            stabilizedFreeGainBytes: metrics.stabilizedFreeGainBytes,
+            beforePressure: beforePressure.level || 'unknown',
+            afterPressure: (metrics.stabilizedPressure && metrics.stabilizedPressure.level) || 'unknown',
+          });
+        }
+      }
+    }
+
+    const summary = {
+      trigger,
+      finishedAt: new Date().toISOString(),
+      durationMs: Date.now() - startedAt,
+      snapshot: {
+        ramUsedPct: snapshot.ram.usedPct,
+        cpuPct: snapshot.cpu.pct,
+        diskPct: snapshot.disk.pct,
+        pressure: (snapshot.ram.pressure && snapshot.ram.pressure.level) || 'unknown',
+      },
+      actions,
+    };
+
+    autoCareStatus.lastRunAt = summary.finishedAt;
+    autoCareStatus.runCount = Number(autoCareStatus.runCount || 0) + 1;
+    autoCareStatus.lastResult = summary;
+    return { success: true, ...summary };
+  } catch (e) {
+    autoCareStatus.lastRunAt = new Date().toISOString();
+    autoCareStatus.runCount = Number(autoCareStatus.runCount || 0) + 1;
+    autoCareStatus.lastError = e.message || 'Auto Care run failed';
+    autoCareStatus.lastResult = {
+      trigger,
+      finishedAt: autoCareStatus.lastRunAt,
+      durationMs: Date.now() - startedAt,
+      actions: [],
+      error: autoCareStatus.lastError,
+    };
+    return { success: false, error: autoCareStatus.lastError };
+  } finally {
+    autoCareStatus.running = false;
+  }
+}
+
+function resetAutoCareScheduler(immediate = false) {
+  stopAutoCareScheduler();
+  const cfg = getAutoCareSettings();
+  if (!cfg.enabled || isSuspended) return;
+  const delayMs = immediate ? 2000 : cfg.intervalMinutes * 60 * 1000;
+  const nextAt = Date.now() + delayMs;
+  autoCareStatus.nextRunAt = new Date(nextAt).toISOString();
+  autoCareTimer = setTimeout(async () => {
+    await runAutoCareOnce('scheduled');
+    resetAutoCareScheduler(false);
+  }, delayMs);
+}
+
+function setAutoCareSettings(patch = {}) {
+  const current = getAutoCareSettings();
+  const merged = { ...current, ...(patch && typeof patch === 'object' ? patch : {}) };
+  settings.autoCare = normalizeAutoCareSettings(merged);
+  saveSettings();
+  resetAutoCareScheduler(false);
+  return getAutoCareSettings();
+}
+
 function buildTrayMenu() {
   const ram = getRamSnapshot();
   const pressure = getMemoryPressure();
@@ -1194,52 +1758,39 @@ function setRefreshProfile(profile) {
 // ─── IPC: System Info ─────────────────────────────────────────────────────────
 
 ipcMain.handle('get-system-info', async () => {
-  const ram = getRamSnapshot();
-  const pressure = getMemoryPressure();
-
-  // ── CPU ──
-  const cpuLoad = run("top -l 1 -n 0 | grep 'CPU usage'").trim();
-  const cpuMatch = cpuLoad.match(/(\d+\.?\d*)% user/);
-  const cpuPct = cpuMatch ? Math.round(parseFloat(cpuMatch[1])) : 0;
-  const load = os.loadavg();
-  const cores = os.cpus().length || 1;
-
-  // ── Disk ──
-  const dfOut = run('df -k /').split('\n')[1]?.split(/\s+/) || [];
-  const diskTotal = parseInt(dfOut[1] || 0) * 1024;
-  const diskUsed  = parseInt(dfOut[2] || 0) * 1024;
-  const diskFree  = parseInt(dfOut[3] || 0) * 1024;
-  const diskPct   = diskTotal > 0 ? Math.round((diskUsed / diskTotal) * 100) : 0;
-
-  // ── Battery ──
-  const battOut = run('pmset -g batt');
-  const battMatch = battOut.match(/(\d+)%/);
-  const battPct = battMatch ? parseInt(battMatch[1]) : null;
-  const isCharging = battOut.includes('AC Power') || battOut.includes('charging');
-
-    return {
-    ram: { ...ram, pressure },
-    cpu: {
-      pct: cpuPct,
-      load1: load[0],
-      load5: load[1],
-      load15: load[2],
-      cores,
-    },
-    disk: { total: diskTotal, used: diskUsed, free: diskFree, pct: diskPct },
-    battery: battPct !== null ? { pct: battPct, charging: isCharging } : null,
-    hostname: os.hostname(),
-    platform: process.arch,
-  };
+  return getSystemInfoSnapshot();
 });
 
 ipcMain.handle('get-settings', async () => {
-  return { ...settings, refreshProfile: getRefreshProfile() };
+  return {
+    ...settings,
+    refreshProfile: getRefreshProfile(),
+    autoCare: getAutoCareSettings(),
+  };
 });
 
 ipcMain.handle('set-refresh-profile', async (event, profile) => {
   setRefreshProfile(profile);
   return { success: true, refreshProfile: getRefreshProfile() };
+});
+
+ipcMain.handle('get-auto-care-state', async () => {
+  return { success: true, ...getAutoCareState() };
+});
+
+ipcMain.handle('set-auto-care-settings', async (event, patch = {}) => {
+  const updated = setAutoCareSettings(patch || {});
+  return { success: true, settings: updated, status: getAutoCareState().status };
+});
+
+ipcMain.handle('run-auto-care-now', async () => {
+  const result = await runAutoCareOnce('manual');
+  resetAutoCareScheduler(false);
+  return {
+    success: !!result.success,
+    result,
+    status: getAutoCareState().status,
+  };
 });
 
 // ─── IPC: RAM Processes ────────────────────────────────────────────────────────
@@ -1506,43 +2057,93 @@ ipcMain.handle('get-disk-junk', async () => {
 
 // ─── IPC: Clean Disk Item ─────────────────────────────────────────────────────
 
-ipcMain.handle('clean-disk-item', async (event, id) => {
+ipcMain.handle('clean-disk-item', async (event, id, options = {}) => {
+  const dryRun = !!options.dryRun;
+  const recordHistory = options.recordHistory !== false;
   const home = os.homedir();
   const targets = {
-    user_cache:   { path: `${home}/Library/Caches` },
+    user_cache:   { paths: [`${home}/Library/Caches`] },
     system_logs:  { paths: [`${home}/Library/Logs`] },
     trash:        { cmd: `osascript -e 'tell application "Finder" to empty trash'` },
-    mail_cache:   { path: `${home}/Library/Containers/com.apple.mail/Data/Library/Caches` },
-    xcode_derived:{ path: `${home}/Library/Developer/Xcode/DerivedData` },
-    ios_backups:  { path: `${home}/Library/Application Support/MobileSync/Backup` },
+    mail_cache:   { paths: [`${home}/Library/Containers/com.apple.mail/Data/Library/Caches`] },
+    xcode_derived:{ paths: [`${home}/Library/Developer/Xcode/DerivedData`] },
+    ios_backups:  { paths: [`${home}/Library/Application Support/MobileSync/Backup`] },
   };
 
   const target = targets[id];
   if (!target) return { success: false, error: 'Unknown category' };
 
-  return new Promise((resolve) => {
-    if (target.cmd) {
-      exec(target.cmd, { timeout: 30000 }, (err) => {
-        resolve({ success: !err, error: err?.message });
-      });
-    } else {
-      const paths = target.paths || [target.path];
+  if (target.cmd) {
+    const trashDir = path.join(home, '.Trash');
+    let trashEntries = [];
+    if (fs.existsSync(trashDir)) {
       try {
-        paths.forEach(p => {
-          if (fs.existsSync(p)) {
-            // Clear contents but keep folder
-            const contents = fs.readdirSync(p);
-            contents.forEach(item => {
-              try { execSync(`rm -rf "${path.join(p, item)}"`, { timeout: 10000 }); }
-              catch {}
-            });
-          }
-        });
-        resolve({ success: true });
-      } catch (e) {
-        resolve({ success: false, error: e.message });
+        trashEntries = fs.readdirSync(trashDir).map(name => path.join(trashDir, name));
+      } catch {
+        trashEntries = [];
       }
     }
+    const previewBytes = trashEntries.reduce((acc, p) => acc + pathSize(p), 0);
+    if (dryRun) {
+      return {
+        success: true,
+        dryRun: true,
+        candidateCount: trashEntries.length,
+        previewCount: trashEntries.length,
+        previewBytes,
+      };
+    }
+    return new Promise((resolve) => {
+      exec(target.cmd, { timeout: 30000 }, (err) => {
+        if (!err && recordHistory) {
+          const historyEntry = makeCleanupHistoryEntry({
+            module: 'storage-sweep',
+            action: 'Storage Sweep · Empty Trash',
+            dryRun: false,
+            candidateCount: trashEntries.length,
+            movedItems: [],
+            failed: [],
+            meta: {
+              nonRestorable: true,
+              category: id,
+              bytesRemoved: previewBytes,
+            },
+          });
+          historyEntry.bytes = previewBytes;
+          appendCleanupHistoryEntry(historyEntry);
+        }
+        resolve({
+          success: !err,
+          error: err?.message,
+          trashedCount: 0,
+          trashedBytes: previewBytes,
+          candidateCount: trashEntries.length,
+        });
+      });
+    });
+  }
+
+  const roots = target.paths || [];
+  const candidatePaths = [];
+  for (const root of roots) {
+    if (!fs.existsSync(root)) continue;
+    let contents = [];
+    try { contents = fs.readdirSync(root); } catch { contents = []; }
+    for (const item of contents) {
+      const full = path.join(root, item);
+      if (!isHomePath(full)) continue;
+      if (!fs.existsSync(full)) continue;
+      candidatePaths.push(full);
+    }
+  }
+
+  return trashPathsWithSafety(candidatePaths, {
+    dryRun,
+    recordHistory,
+    module: 'storage-sweep',
+    action: `Storage Sweep · ${id}`,
+    allowPath: isHomePath,
+    meta: { category: id },
   });
 });
 
@@ -1556,44 +2157,21 @@ ipcMain.handle('scan-duplicates', async (event, options = {}) => {
   }
 });
 
-ipcMain.handle('trash-paths', async (event, paths = []) => {
-  const targets = Array.isArray(paths) ? paths : [];
-  const trashed = [];
-  const failed = [];
-  let trashedBytes = 0;
+ipcMain.handle('trash-paths', async (event, payload = {}) => {
+  const usingLegacyArray = Array.isArray(payload);
+  const targets = usingLegacyArray ? payload : (Array.isArray(payload.paths) ? payload.paths : []);
+  const dryRun = !usingLegacyArray && !!payload.dryRun;
+  const module = !usingLegacyArray && payload.module ? String(payload.module) : 'cleanup';
+  const action = !usingLegacyArray && payload.action ? String(payload.action) : 'Move selected items to Trash';
+  const recordHistory = usingLegacyArray ? true : payload.recordHistory !== false;
 
-  for (const rawPath of targets) {
-    const targetPath = path.resolve(String(rawPath || ''));
-    if (!isHomePath(targetPath)) {
-      failed.push({ path: targetPath, error: 'Path outside home directory is blocked' });
-      continue;
-    }
-    if (!fs.existsSync(targetPath)) {
-      failed.push({ path: targetPath, error: 'File not found' });
-      continue;
-    }
-
-    try {
-      const st = fs.statSync(targetPath);
-      if (!st.isFile() && !st.isDirectory()) {
-        failed.push({ path: targetPath, error: 'Only files and folders can be moved to Trash' });
-        continue;
-      }
-      const targetBytes = pathSize(targetPath);
-      await shell.trashItem(targetPath);
-      trashed.push(targetPath);
-      trashedBytes += targetBytes;
-    } catch (e) {
-      failed.push({ path: targetPath, error: e.message || 'Trash operation failed' });
-    }
-  }
-
-  return {
-    success: failed.length === 0,
-    trashed,
-    trashedBytes,
-    failed,
-  };
+  return trashPathsWithSafety(targets, {
+    dryRun,
+    recordHistory,
+    module,
+    action,
+    allowPath: isHomePath,
+  });
 });
 
 ipcMain.handle('get-space-lens', async (event, options = {}) => {
@@ -1620,6 +2198,8 @@ ipcMain.handle('clean-cloud-provider-cache', async (event, payload = {}) => {
       providerId,
       staleDays: payload.staleDays,
       maxFiles: payload.maxFiles,
+      dryRun: !!payload.dryRun,
+      recordHistory: payload.recordHistory !== false,
     });
   } catch (e) {
     return { success: false, error: e.message || 'Cloud cleanup action failed' };
@@ -1745,26 +2325,25 @@ function sanitizeAppLeftoverPaths(paths) {
   return out;
 }
 
-async function trashTargets(targets) {
-  const trashed = [];
-  const failed = [];
-  let bytes = 0;
-  for (const targetPath of targets) {
-    if (!isHomePath(targetPath)) {
-      failed.push({ path: targetPath, error: 'Path outside home scope' });
-      continue;
-    }
-    if (!fs.existsSync(targetPath)) continue;
-    const size = pathSize(targetPath);
-    try {
-      await shell.trashItem(targetPath);
-      trashed.push(targetPath);
-      bytes += size;
-    } catch (e) {
-      failed.push({ path: targetPath, error: e.message || 'Failed to move to Trash' });
-    }
-  }
-  return { trashed, failed, bytes };
+async function trashTargets(targets, options = {}) {
+  const result = await trashPathsWithSafety(targets, {
+    dryRun: !!options.dryRun,
+    recordHistory: options.recordHistory !== false,
+    allowPath: isHomePath,
+    module: options.module || 'app-manager',
+    action: options.action || 'App Manager cleanup',
+    meta: options.meta || {},
+  });
+  return {
+    trashed: result.trashed,
+    failed: result.failed,
+    bytes: result.trashedBytes,
+    dryRun: result.dryRun,
+    candidateCount: result.candidateCount,
+    previewCount: result.previewCount,
+    previewBytes: result.previewBytes,
+    historyId: result.historyId || null,
+  };
 }
 
 // ─── IPC: List Apps ────────────────────────────────────────────────────────────
@@ -1828,12 +2407,45 @@ ipcMain.handle('uninstall-app', async (event, payload = {}) => {
   const appPath = path.resolve(String(payload.appPath || ''));
   const appName = path.basename(appPath, '.app') || 'app';
   const skipConfirm = !!payload.skipConfirm;
+  const dryRun = !!payload.dryRun;
+  const recordHistory = payload.recordHistory !== false;
   const leftoverTargets = sanitizeAppLeftoverPaths(payload.leftoverPaths);
 
   if (!isUninstallableAppPath(appPath)) {
     return { success: false, error: 'Unsupported app path. Only /Applications or ~/Applications bundles are allowed.' };
   }
   if (!fs.existsSync(appPath)) return { success: false, error: 'App not found' };
+
+  const appPreview = await trashPathsWithSafety([appPath], {
+    dryRun: true,
+    recordHistory: false,
+    allowPath: isUninstallableAppPath,
+    module: 'app-manager',
+    action: `Uninstall ${appName}`,
+  });
+  const leftoversPreview = await trashTargets(leftoverTargets, {
+    dryRun: true,
+    recordHistory: false,
+    module: 'app-manager',
+    action: `Leftover cleanup · ${appName}`,
+  });
+
+  const preview = {
+    appCandidateCount: appPreview.previewCount,
+    leftoverCandidateCount: leftoversPreview.previewCount,
+    candidateCount: appPreview.previewCount + leftoversPreview.previewCount,
+    previewBytes: (appPreview.previewBytes || 0) + (leftoversPreview.previewBytes || 0),
+    appFailed: appPreview.failed || [],
+    leftoverFailed: leftoversPreview.failed || [],
+  };
+
+  if (dryRun) {
+    return {
+      success: true,
+      dryRun: true,
+      ...preview,
+    };
+  }
 
   if (!skipConfirm) {
     const { response } = await dialog.showMessageBox(mainWindow, {
@@ -1843,17 +2455,28 @@ ipcMain.handle('uninstall-app', async (event, payload = {}) => {
       cancelId: 0,
       title: 'Confirm Uninstall',
       message: `Uninstall ${path.basename(appPath)}?`,
-      detail: 'The app bundle and selected support files will be moved to Trash.',
+      detail: `${preview.candidateCount} item(s) will be moved to Trash (${bytesToHuman(preview.previewBytes)}).`,
     });
     if (response === 0) return { success: false, cancelled: true };
   }
 
-  let appTrashed = false;
-  try {
-    await shell.trashItem(appPath);
-    appTrashed = true;
-  } catch (e) {
+  const appResult = await trashPathsWithSafety([appPath], {
+    dryRun: false,
+    recordHistory,
+    allowPath: isUninstallableAppPath,
+    module: 'app-manager',
+    action: `Uninstall ${appName}`,
+    meta: {
+      appPath,
+      appName,
+    },
+  });
+
+  let appTrashed = appResult.trashedCount > 0;
+  let usedAdminDeleteFallback = false;
+  if (!appTrashed) {
     // Fallback: require admin
+    const appBytes = pathSize(appPath);
     await new Promise((resolve) => {
       exec(
         `osascript -e 'do shell script "rm -rf \\"${appPath}\\"" with administrator privileges'`,
@@ -1863,24 +2486,77 @@ ipcMain.handle('uninstall-app', async (event, payload = {}) => {
         }
       );
     });
+    if (appTrashed) {
+      usedAdminDeleteFallback = true;
+      if (recordHistory) {
+        appendCleanupHistoryEntry(makeCleanupHistoryEntry({
+          module: 'app-manager',
+          action: `Uninstall ${appName} (admin delete)`,
+          dryRun: false,
+          candidateCount: 1,
+          movedItems: [],
+          failed: [],
+          meta: {
+            nonRestorable: true,
+            deletedDirectly: true,
+            appPath,
+            appName,
+            bytesRemoved: appBytes,
+          },
+        }));
+      }
+    }
     if (!appTrashed) return { success: false, error: `Could not uninstall ${appName}` };
   }
 
-  const cleanup = await trashTargets(leftoverTargets);
+  const cleanup = await trashTargets(leftoverTargets, {
+    dryRun: false,
+    recordHistory,
+    module: 'app-manager',
+    action: `Leftover cleanup · ${appName}`,
+    meta: {
+      appPath,
+      appName,
+    },
+  });
+
   return {
     success: cleanup.failed.length === 0,
     appTrashed: true,
+    appDeleteFallback: usedAdminDeleteFallback,
     cleanedLeftoverCount: cleanup.trashed.length,
     cleanedLeftoverBytes: cleanup.bytes,
     failedLeftovers: cleanup.failed,
+    appHistoryId: appResult.historyId || null,
+    leftoversHistoryId: cleanup.historyId || null,
+    preview,
   };
 });
 
 ipcMain.handle('clean-app-leftovers', async (event, payload = {}) => {
   const appName = String(payload.appName || 'this app');
   const skipConfirm = !!payload.skipConfirm;
+  const dryRun = !!payload.dryRun;
+  const recordHistory = payload.recordHistory !== false;
   const targets = sanitizeAppLeftoverPaths(payload.leftoverPaths);
   if (!targets.length) return { success: true, cleanedCount: 0, cleanedBytes: 0, failed: [] };
+
+  const preview = await trashTargets(targets, {
+    dryRun: true,
+    recordHistory: false,
+    module: 'app-manager',
+    action: `Leftover cleanup · ${appName}`,
+  });
+  if (dryRun) {
+    return {
+      success: true,
+      dryRun: true,
+      candidateCount: preview.candidateCount,
+      previewCount: preview.previewCount,
+      previewBytes: preview.previewBytes,
+      failed: preview.failed,
+    };
+  }
 
   if (!skipConfirm) {
     const { response } = await dialog.showMessageBox(mainWindow, {
@@ -1890,17 +2566,24 @@ ipcMain.handle('clean-app-leftovers', async (event, payload = {}) => {
       cancelId: 0,
       title: 'Cleanup Leftovers',
       message: `Clean leftovers for ${appName}?`,
-      detail: `${targets.length} file/folder item(s) will be moved to Trash.`,
+      detail: `${preview.previewCount} file/folder item(s) will be moved to Trash (${bytesToHuman(preview.previewBytes)}).`,
     });
     if (response === 0) return { success: false, cancelled: true };
   }
 
-  const cleanup = await trashTargets(targets);
+  const cleanup = await trashTargets(targets, {
+    dryRun: false,
+    recordHistory,
+    module: 'app-manager',
+    action: `Leftover cleanup · ${appName}`,
+  });
   return {
     success: cleanup.failed.length === 0,
     cleanedCount: cleanup.trashed.length,
     cleanedBytes: cleanup.bytes,
     failed: cleanup.failed,
+    historyId: cleanup.historyId || null,
+    preview,
   };
 });
 
@@ -1966,6 +2649,17 @@ ipcMain.handle('run-protection-action', async (event, payload = {}) => {
     if (!targetPath || !fs.existsSync(targetPath)) return { success: false, error: 'Target not found' };
     if (!canTrashProtectionPath(targetPath)) return { success: false, error: 'Path is outside allowed cleanup scope' };
 
+    const preview = await trashPathsWithSafety([targetPath], {
+      dryRun: true,
+      recordHistory: false,
+      allowPath: canTrashProtectionPath,
+      module: 'shield',
+      action: `Shield cleanup · ${path.basename(targetPath)}`,
+    });
+    const previewCount = preview.previewCount || 0;
+    const previewBytes = preview.previewBytes || 0;
+    if (previewCount < 1) return { success: false, error: 'Nothing available to move to Trash' };
+
     const { response } = await dialog.showMessageBox(mainWindow, {
       type: 'warning',
       buttons: ['Cancel', 'Move to Trash'],
@@ -1973,16 +2667,21 @@ ipcMain.handle('run-protection-action', async (event, payload = {}) => {
       cancelId: 0,
       title: 'Confirm Cleanup Action',
       message: `Move ${path.basename(targetPath)} to Trash?`,
-      detail: 'This action can be undone from Trash.',
+      detail: `Dry run: ${previewCount} item(s), ${bytesToHuman(previewBytes)}. This action can be undone from Trash.`,
     });
     if (response === 0) return { success: false, cancelled: true };
-    try {
-      await shell.trashItem(targetPath);
+    const result = await trashPathsWithSafety([targetPath], {
+      dryRun: false,
+      recordHistory: true,
+      allowPath: canTrashProtectionPath,
+      module: 'shield',
+      action: `Shield cleanup · ${path.basename(targetPath)}`,
+    });
+    if (result.success) {
       protectionCache = { ts: 0, report: null };
-      return { success: true };
-    } catch (e) {
-      return { success: false, error: e.message || 'Failed to move item to Trash' };
+      return result;
     }
+    return { success: false, error: (result.failed[0] && result.failed[0].error) || 'Failed to move item to Trash' };
   }
 
   return { success: false, error: 'Unsupported action' };
@@ -2055,6 +2754,28 @@ ipcMain.handle('clear-privacy', async (event, itemId) => {
   } catch (e) {
     return { success: false, error: e.message };
   }
+});
+
+// ─── IPC: Safety Center ───────────────────────────────────────────────────────
+
+ipcMain.handle('get-cleanup-history', async (event, options = {}) => {
+  const limit = Math.max(10, Math.min(200, Number(options.limit) || 80));
+  const entries = loadCleanupHistoryEntries().slice(0, limit);
+  return { success: true, entries };
+});
+
+ipcMain.handle('restore-cleanup-entry', async (event, payload = {}) => {
+  try {
+    const res = await restoreCleanupEntryById(payload.entryId);
+    return res;
+  } catch (e) {
+    return { success: false, error: e.message || 'Restore failed' };
+  }
+});
+
+ipcMain.handle('clear-cleanup-history', async () => {
+  saveCleanupHistoryEntries([]);
+  return { success: true };
 });
 
 // ─── IPC: App Info ─────────────────────────────────────────────────────────────

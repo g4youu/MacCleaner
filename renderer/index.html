@@ -411,6 +411,7 @@ input.dup-check{accent-color:var(--accent);transform:translateY(2px)}
     <div class="nav-item" data-page="uninstall"><span class="nav-icon">📦</span>App Manager</div>
     <div class="nav-item" data-page="startup"><span class="nav-icon">🚀</span>Launch Control</div>
     <div class="nav-item" data-page="privacy"><span class="nav-icon">🔒</span>Shield</div>
+    <div class="nav-item" data-page="safety"><span class="nav-icon">🧯</span>Safety Center</div>
     <div class="nav-item" data-page="clutter"><span class="nav-icon">🧬</span>Clutter Finder</div>
     <div class="nav-item" data-page="cloud"><span class="nav-icon">☁️</span>Cloud Trim</div>
     <div class="nav-item" data-page="lens"><span class="nav-icon">🔎</span>Space Atlas</div>
@@ -803,6 +804,78 @@ input.dup-check{accent-color:var(--accent);transform:translateY(2px)}
       </div>
     </div>
 
+    <!-- SAFETY -->
+    <div class="page" id="page-safety">
+      <div class="page-header">
+        <div><div class="page-title">Safety Center</div><div class="page-sub">Dry-run previews, cleanup history, and one-click restore from Trash</div></div>
+        <div class="header-actions">
+          <button class="btn btn-ghost btn-sm" onclick="clearSafetyHistory()">Clear History</button>
+          <button class="btn btn-ghost btn-sm" onclick="loadSafety(true)">↻ Refresh</button>
+        </div>
+      </div>
+      <div id="safety-notice"></div>
+      <div class="card">
+        <div class="card-title">Auto Care Scheduler</div>
+        <div class="clutter-toolbar">
+          <div class="clutter-control">
+            <label for="autocare-enabled">Auto Care</label>
+            <select id="autocare-enabled">
+              <option value="off" selected>Disabled</option>
+              <option value="on">Enabled</option>
+            </select>
+          </div>
+          <div class="clutter-control">
+            <label for="autocare-interval">Run every</label>
+            <select id="autocare-interval">
+              <option value="15">15 min</option>
+              <option value="30" selected>30 min</option>
+              <option value="60">60 min</option>
+              <option value="120">120 min</option>
+            </select>
+          </div>
+          <div class="clutter-control">
+            <label for="autocare-ram-clean">Memory action</label>
+            <select id="autocare-ram-clean">
+              <option value="off" selected>Monitor only</option>
+              <option value="on">Auto clean on pressure</option>
+            </select>
+          </div>
+          <div class="clutter-control">
+            <label for="autocare-pressure">Trigger level</label>
+            <select id="autocare-pressure">
+              <option value="critical" selected>Critical</option>
+              <option value="warning">Warning</option>
+            </select>
+          </div>
+          <div class="clutter-control">
+            <label for="autocare-inactive">Min inactive (GB)</label>
+            <input id="autocare-inactive" type="number" min="0.5" max="8" step="0.5" value="2">
+          </div>
+          <div class="clutter-control">
+            <label for="autocare-battery">On battery</label>
+            <select id="autocare-battery">
+              <option value="off" selected>Skip cleanup</option>
+              <option value="on">Allow cleanup</option>
+            </select>
+          </div>
+          <div class="clutter-toolbar-actions">
+            <button class="btn btn-ghost btn-sm" id="autocare-run-btn" onclick="runAutoCareNow()">▶ Run Now</button>
+            <button class="btn btn-primary btn-sm" id="autocare-save-btn" onclick="saveAutoCareSettings()">💾 Save Scheduler</button>
+          </div>
+        </div>
+        <div id="autocare-meta" class="clutter-toolbar-meta"></div>
+      </div>
+      <div class="grid-3">
+        <div class="card"><div class="card-title">History Entries</div><div id="safety-stat-entries" style="font-size:34px;font-weight:800;line-height:1.1">—</div><div style="font-size:12px;color:var(--muted);margin-top:6px">Recent cleanup operations</div></div>
+        <div class="card"><div class="card-title">Restorable Items</div><div id="safety-stat-restorable" style="font-size:34px;font-weight:800;line-height:1.1;color:var(--accent3)">—</div><div style="font-size:12px;color:var(--muted);margin-top:6px">Items still available in Trash</div></div>
+        <div class="card"><div class="card-title">Space Moved</div><div id="safety-stat-bytes" style="font-size:34px;font-weight:800;line-height:1.1;color:var(--success)">—</div><div style="font-size:12px;color:var(--muted);margin-top:6px">Total moved in history view</div></div>
+      </div>
+      <div class="card">
+        <div class="card-title">Cleanup History</div>
+        <div id="safety-history"><div class="skel" style="height:220px;border-radius:10px"></div></div>
+      </div>
+    </div>
+
   </div>
 </div>
 <script>
@@ -826,6 +899,7 @@ const loaders = {
   uninstall: loadApps,
   startup: loadStartup,
   privacy: loadProtection,
+  safety: loadSafety,
   clutter: loadClutter,
   cloud: loadCloud,
   lens: loadLens,
@@ -928,6 +1002,17 @@ var cloudState = {
   },
   providers: [],
 };
+var safetyState = {
+  loading: false,
+  entries: [],
+};
+var autoCareState = {
+  loading: false,
+  saving: false,
+  running: false,
+  settings: null,
+  status: null,
+};
 
 function estimateHealthScore(info){
   var r=info.ram,d=info.disk,c=info.cpu,pressure=r.pressure||{level:'normal'};
@@ -955,6 +1040,7 @@ function activeNoticeTarget(){
   if(active.id==='page-disk') return 'disk-notice';
   if(active.id==='page-uninstall') return 'uninstall-notice';
   if(active.id==='page-privacy') return 'privacy-notice';
+  if(active.id==='page-safety') return 'safety-notice';
   if(active.id==='page-clutter') return 'clutter-notice';
   if(active.id==='page-cloud') return 'cloud-notice';
   if(active.id==='page-lens') return 'lens-notice';
@@ -1203,14 +1289,43 @@ function renderDisk(){
 async function cleanDisk(id){
   var btn=document.getElementById('dbtn-'+id);
   if(btn){btn.disabled=true;btn.innerHTML='<span class="spin">⟳</span>';}
-  var res=await bridge.cleanDiskItem(id);
+  var preview=await bridge.cleanDiskItem(id,{dryRun:true,recordHistory:false});
+  if(!preview||!preview.success){
+    if(btn){btn.disabled=false;btn.innerHTML='🗑️ Clean';}
+    notice('disk-notice','error','⚠️','Dry run failed',preview&&preview.error?preview.error:'Could not prepare cleanup preview.');
+    return;
+  }
+  if((preview.previewCount||0)<1){
+    if(btn){btn.disabled=false;btn.innerHTML='🗑️ Clean';}
+    notice('disk-notice','info','ℹ️','Nothing to clean','No cleanable items found for this category.');
+    return;
+  }
+  var proceed=window.confirm(
+    'Dry run complete for this category.\n\n'+
+    'Candidates: '+(preview.previewCount||0)+' item'+((preview.previewCount||0)===1?'':'s')+'\n'+
+    'Estimated space: '+fmt(preview.previewBytes||0)+'\n\n'+
+    'Move these items to Trash now?'
+  );
+  if(!proceed){
+    if(btn){btn.disabled=false;btn.innerHTML='🗑️ Clean';}
+    return;
+  }
+
+  var res=await bridge.cleanDiskItem(id,{dryRun:false,recordHistory:true});
   var item=diskItems.find(function(i){return i.id===id;});
-  if(res.success&&item){
-    diskCleaned+=item.bytes;item._c=true;
+  if(res&&res.success&&item){
+    var freed=res.trashedBytes||item.bytes||0;
+    diskCleaned+=freed;
+    item._c=true;
     document.getElementById('disk-cleaned-amt').textContent=fmt(diskCleaned);
     renderDisk();updateDiskStats();
-    notice('disk-notice','success','✨',fmt(diskCleaned)+' freed so far!');
+    if(res.failed&&res.failed.length){
+      notice('disk-notice','error','⚠️','Cleanup finished with warnings',(res.trashedCount||0)+' moved, '+res.failed.length+' failed.');
+    }else{
+      notice('disk-notice','success','✨',fmt(diskCleaned)+' freed so far!');
+    }
     loadSmartCare();
+    if(!isBatch) loadSafety(false);
     loadDashboard();
   }else if(btn){btn.disabled=false;btn.innerHTML='🗑️ Clean';}
 }
@@ -1353,10 +1468,38 @@ async function doUninstall(safeId,appPath,skipConfirm,isBatch){
   var btn=document.getElementById('ubtn-'+safeId);
   if(btn && !isBatch){btn.disabled=true;btn.innerHTML='<span class="spin">⟳</span>';}
   var app=appList.find(function(a){return appSafeId(a)===safeId;})||appList.find(function(a){return a.path===appPath;});
+  if(!skipConfirm && !isBatch){
+    var preview=await bridge.uninstallApp({
+      appPath:appPath,
+      leftoverPaths:app?app.leftoverPaths:[],
+      skipConfirm:true,
+      dryRun:true,
+      recordHistory:false,
+    });
+    if(!preview||!preview.success){
+      if(btn){btn.disabled=false;btn.innerHTML='🗑️ Uninstall';}
+      notice('uninstall-notice','error','⚠️','Dry run failed',preview&&preview.error?preview.error:'Could not prepare uninstall preview.');
+      return preview||{success:false};
+    }
+    var candidateCount=preview.candidateCount||0;
+    var previewBytes=preview.previewBytes||0;
+    var proceed=window.confirm(
+      'Dry run complete for '+(app?app.name:'selected app')+'.\n\n'+
+      'Candidates: '+candidateCount+' item'+(candidateCount===1?'':'s')+'\n'+
+      'Estimated space: '+fmt(previewBytes)+'\n\n'+
+      'Proceed with uninstall and move eligible items to Trash?'
+    );
+    if(!proceed){
+      if(btn){btn.disabled=false;btn.innerHTML='🗑️ Uninstall';}
+      return { success:false, cancelled:true };
+    }
+  }
   var res=await bridge.uninstallApp({
     appPath:appPath,
     leftoverPaths:app?app.leftoverPaths:[],
-    skipConfirm:!!skipConfirm,
+    skipConfirm:true,
+    dryRun:false,
+    recordHistory:true,
   });
   if(res.cancelled){if(btn && !isBatch){btn.disabled=false;btn.innerHTML='🗑️ Uninstall';}return res;}
   if(res.success){
@@ -1370,6 +1513,7 @@ async function doUninstall(safeId,appPath,skipConfirm,isBatch){
       var cleaned=res.cleanedLeftoverCount||0;
       notice('uninstall-notice','success','✅','App uninstalled','Moved app to Trash'+(cleaned?(' and cleaned '+cleaned+' leftover item'+(cleaned===1?'':'s')+'.'):'.'));
     }
+    if(!isBatch) loadSafety(false);
   }else{
     if(btn && !isBatch){btn.disabled=false;btn.innerHTML='🗑️ Uninstall';}
     if(!isBatch) notice('uninstall-notice','error','⚠️','Uninstall failed',res.error||'Unknown error');
@@ -1381,10 +1525,41 @@ async function cleanAppLeftovers(safeId,skipConfirm,isBatch){
   if(!app || !(app.leftover>0)) return { success: true, cleanedCount: 0 };
   var btn=document.getElementById('cbtn-'+safeId);
   if(btn && !isBatch){btn.disabled=true;btn.innerHTML='<span class="spin">⟳</span>';}
+  if(!skipConfirm && !isBatch){
+    var preview=await bridge.cleanAppLeftovers({
+      appName: app.name,
+      leftoverPaths: app.leftoverPaths||[],
+      skipConfirm: true,
+      dryRun: true,
+      recordHistory: false,
+    });
+    if(!preview||!preview.success){
+      if(btn){btn.disabled=false;btn.innerHTML='🧹 Leftovers';}
+      notice('uninstall-notice','error','⚠️','Dry run failed',preview&&preview.error?preview.error:'Could not prepare cleanup preview.');
+      return preview||{success:false};
+    }
+    if((preview.previewCount||0)<1){
+      if(btn){btn.disabled=false;btn.innerHTML='🧹 Leftovers';}
+      notice('uninstall-notice','info','ℹ️','Nothing to clean',app.name+': no leftover files are currently available.');
+      return { success:true, cleanedCount:0, cleanedBytes:0 };
+    }
+    var proceed=window.confirm(
+      'Dry run complete for '+app.name+'.\n\n'+
+      'Candidates: '+(preview.previewCount||0)+' item'+((preview.previewCount||0)===1?'':'s')+'\n'+
+      'Estimated space: '+fmt(preview.previewBytes||0)+'\n\n'+
+      'Move these leftovers to Trash now?'
+    );
+    if(!proceed){
+      if(btn){btn.disabled=false;btn.innerHTML='🧹 Leftovers';}
+      return { success:false, cancelled:true };
+    }
+  }
   var res=await bridge.cleanAppLeftovers({
     appName: app.name,
     leftoverPaths: app.leftoverPaths||[],
-    skipConfirm: !!skipConfirm,
+    skipConfirm: true,
+    dryRun: false,
+    recordHistory: true,
   });
   if(res&&res.cancelled){
     if(btn && !isBatch){btn.disabled=false;btn.innerHTML='🧹 Leftovers';}
@@ -1399,6 +1574,7 @@ async function cleanAppLeftovers(safeId,skipConfirm,isBatch){
     if(!isBatch){
       notice('uninstall-notice','success','🧹','Leftovers cleaned',app.name+': '+(res.cleanedCount||0)+' item'+((res.cleanedCount||0)===1?'':'s')+' moved to Trash ('+fmt(res.cleanedBytes||0)+').');
     }
+    loadSafety(false);
   }else{
     if(btn && !isBatch){btn.disabled=false;btn.innerHTML='🧹 Leftovers';}
     if(!isBatch) notice('uninstall-notice','error','⚠️','Leftover cleanup failed',res&&res.error?res.error:'Unknown error');
@@ -1434,6 +1610,7 @@ async function batchCleanLeftovers(){
   }else{
     notice('uninstall-notice','success','✅','Batch leftovers cleanup complete','Cleaned '+cleanedApps+' app'+(cleanedApps===1?'':'s')+' · '+cleanedItems+' item'+(cleanedItems===1?'':'s')+' · '+fmt(cleanedBytes)+'.');
   }
+  loadSafety(false);
 }
 async function batchUninstallSelected(){
   if(appsBatchBusy) return;
@@ -1463,6 +1640,7 @@ async function batchUninstallSelected(){
   }else{
     notice('uninstall-notice','success','✅','Batch uninstall complete',ok+' app'+(ok===1?'':'s')+' removed · '+leftoverItems+' leftover item'+(leftoverItems===1?'':'s')+' cleaned.');
   }
+  loadSafety(false);
 }
 
 // ── Startup ───────────────────────────────────────────────────────────────────
@@ -1605,6 +1783,7 @@ async function runProtectionAction(action,id){
   if(res&&res.success){
     notice('privacy-notice','success','✅','Action completed','Protection state has been refreshed.');
     await loadProtection(true);
+    loadSafety(false);
   }else{
     notice('privacy-notice','error','⚠️','Action failed',res&&res.error?res.error:'Unknown error');
   }
@@ -1634,6 +1813,306 @@ async function clearAllPrivacy(){
     if(!privCleared.has(privItems[i].id)){await clearPrivacy(privItems[i].id);await new Promise(function(r){setTimeout(r,150);});}
   }
   loadSmartCare();
+}
+
+function safetyModuleLabel(moduleId){
+  var m=String(moduleId||'').toLowerCase();
+  if(m==='storage-sweep') return 'Storage Sweep';
+  if(m==='app-manager') return 'App Manager';
+  if(m==='cloud-trim') return 'Cloud Trim';
+  if(m==='clutter-finder') return 'Clutter Finder';
+  if(m==='space-atlas') return 'Space Atlas';
+  if(m==='shield') return 'Shield';
+  return 'Cleanup';
+}
+function safetyModuleColor(moduleId){
+  var m=String(moduleId||'').toLowerCase();
+  if(m==='storage-sweep') return 'var(--warn)';
+  if(m==='app-manager') return 'var(--accent3)';
+  if(m==='cloud-trim') return '#4cc9f0';
+  if(m==='clutter-finder') return 'var(--accent2)';
+  if(m==='space-atlas') return 'var(--success)';
+  if(m==='shield') return 'var(--danger)';
+  return 'var(--accent)';
+}
+function renderSafetyStats(){
+  var entries=safetyState.entries||[];
+  var totalEntries=entries.length;
+  var restorable=0;
+  var bytes=0;
+  entries.forEach(function(entry){
+    restorable+=Math.max(0,(entry.restorableCount||0)-(entry.restoredCount||0));
+    bytes+=(entry.bytes||0);
+  });
+  var elEntries=document.getElementById('safety-stat-entries');
+  var elRestorable=document.getElementById('safety-stat-restorable');
+  var elBytes=document.getElementById('safety-stat-bytes');
+  if(elEntries) elEntries.textContent=String(totalEntries);
+  if(elRestorable) elRestorable.textContent=String(restorable);
+  if(elBytes) elBytes.textContent=fmt(bytes);
+}
+function renderSafetyHistory(){
+  var el=document.getElementById('safety-history');
+  if(!el) return;
+  var entries=safetyState.entries||[];
+  if(!entries.length){
+    el.innerHTML='<div class="empty"><span style="font-size:36px;display:block;margin-bottom:8px">🧯</span>No cleanup history yet. Run a cleanup action to build restore points.</div>';
+    return;
+  }
+  el.innerHTML=entries.map(function(entry){
+    var moduleName=safetyModuleLabel(entry.module);
+    var moduleColor=safetyModuleColor(entry.module);
+    var restorable=Math.max(0,(entry.restorableCount||0)-(entry.restoredCount||0));
+    var failed=entry.failedCount||0;
+    var hasFailures=failed>0;
+    var restoreComplete=!!entry.restoreComplete || (entry.restorableCount>0 && entry.restoredCount>=entry.restorableCount);
+    var canRestore=restorable>0 && !restoreComplete;
+    var firstItem=(entry.items&&entry.items[0])?entry.items[0]:null;
+    var pathText=firstItem&&firstItem.originalPath?escHtml(firstItem.originalPath):'No item path recorded';
+    return '<div class="app-row">'+
+      '<div class="app-icon" style="background:'+moduleColor+'20;color:'+moduleColor+'">🧯</div>'+
+      '<div class="app-info">'+
+        '<div class="app-name">'+escHtml(entry.action||moduleName)+'</div>'+
+        '<div class="app-meta">'+
+          '<span class="tag" style="background:'+moduleColor+'20;color:'+moduleColor+'">'+escHtml(moduleName)+'</span>'+
+          '<span>'+escHtml(fmtTime(entry.createdAt))+'</span>'+
+          '<span>Moved: '+Number(entry.movedCount||0)+'</span>'+
+          '<span>Space: '+fmt(entry.bytes||0)+'</span>'+
+          (hasFailures?'<span class="tag" style="background:rgba(239,68,68,0.14);color:var(--danger)">'+failed+' failed</span>':'')+
+          (entry.restoredCount?'<span class="tag" style="background:rgba(34,197,94,0.14);color:var(--success)">Restored '+entry.restoredCount+'</span>':'')+
+          (entry.meta&&entry.meta.nonRestorable?'<span class="tag" style="background:rgba(255,255,255,0.08);color:var(--muted)">Non-restorable</span>':'')+
+        '</div>'+
+        '<div class="app-meta monospace" style="margin-top:4px">'+pathText+'</div>'+
+      '</div>'+
+      '<button class="btn btn-ghost btn-sm" onclick="loadSafety(true)">Refresh</button>'+
+      '<button class="btn btn-primary btn-sm" onclick="restoreSafetyEntry(\''+escJs(entry.id)+'\')" '+(canRestore?'':'disabled')+'>'+(canRestore?'↩ Restore':'✓ Restored')+'</button>'+
+    '</div>';
+  }).join('');
+}
+function defaultAutoCareSettings(){
+  return {
+    enabled: false,
+    intervalMinutes: 30,
+    ramCleanOnPressure: false,
+    pressureTrigger: 'critical',
+    minInactiveGb: 2,
+    allowOnBattery: false,
+  };
+}
+function normalizeAutoCareClientSettings(value){
+  var src=value&&typeof value==='object'?value:{};
+  var interval=parseInt(src.intervalMinutes,10);
+  var minInactive=parseFloat(src.minInactiveGb);
+  return {
+    enabled: !!src.enabled,
+    intervalMinutes: Number.isFinite(interval)?Math.max(5,Math.min(240,interval)):30,
+    ramCleanOnPressure: !!src.ramCleanOnPressure,
+    pressureTrigger: src.pressureTrigger==='warning'?'warning':'critical',
+    minInactiveGb: Number.isFinite(minInactive)?Math.max(0.5,Math.min(8,minInactive)):2,
+    allowOnBattery: !!src.allowOnBattery,
+  };
+}
+function applyAutoCareSettingsToForm(settings){
+  var s=normalizeAutoCareClientSettings(settings||defaultAutoCareSettings());
+  var enabledEl=document.getElementById('autocare-enabled');
+  var intervalEl=document.getElementById('autocare-interval');
+  var ramEl=document.getElementById('autocare-ram-clean');
+  var pressureEl=document.getElementById('autocare-pressure');
+  var inactiveEl=document.getElementById('autocare-inactive');
+  var batteryEl=document.getElementById('autocare-battery');
+  if(enabledEl) enabledEl.value=s.enabled?'on':'off';
+  if(intervalEl) intervalEl.value=String(s.intervalMinutes);
+  if(ramEl) ramEl.value=s.ramCleanOnPressure?'on':'off';
+  if(pressureEl) pressureEl.value=s.pressureTrigger;
+  if(inactiveEl) inactiveEl.value=String(s.minInactiveGb);
+  if(batteryEl) batteryEl.value=s.allowOnBattery?'on':'off';
+}
+function readAutoCareFormSettings(){
+  var enabledEl=document.getElementById('autocare-enabled');
+  var intervalEl=document.getElementById('autocare-interval');
+  var ramEl=document.getElementById('autocare-ram-clean');
+  var pressureEl=document.getElementById('autocare-pressure');
+  var inactiveEl=document.getElementById('autocare-inactive');
+  var batteryEl=document.getElementById('autocare-battery');
+  return normalizeAutoCareClientSettings({
+    enabled: enabledEl?enabledEl.value==='on':false,
+    intervalMinutes: intervalEl?parseInt(intervalEl.value,10):30,
+    ramCleanOnPressure: ramEl?ramEl.value==='on':false,
+    pressureTrigger: pressureEl?pressureEl.value:'critical',
+    minInactiveGb: inactiveEl?parseFloat(inactiveEl.value):2,
+    allowOnBattery: batteryEl?batteryEl.value==='on':false,
+  });
+}
+function renderAutoCareState(){
+  var settings=normalizeAutoCareClientSettings(autoCareState.settings||defaultAutoCareSettings());
+  var status=autoCareState.status||{};
+  var metaEl=document.getElementById('autocare-meta');
+  var saveBtn=document.getElementById('autocare-save-btn');
+  var runBtn=document.getElementById('autocare-run-btn');
+  var disabled=!!(autoCareState.loading||autoCareState.saving||autoCareState.running);
+  if(saveBtn){
+    saveBtn.disabled=disabled;
+    saveBtn.innerHTML=autoCareState.saving?'<span class="spin">⟳</span> Saving…':'💾 Save Scheduler';
+  }
+  if(runBtn){
+    runBtn.disabled=disabled;
+    runBtn.innerHTML=autoCareState.running?'<span class="spin">⟳</span> Running…':'▶ Run Now';
+  }
+  if(!metaEl) return;
+  var chips=[
+    '<span class="clutter-chip">Status: '+(settings.enabled?'Enabled':'Disabled')+'</span>',
+    '<span class="clutter-chip">Interval: '+settings.intervalMinutes+' min</span>',
+    '<span class="clutter-chip">RAM action: '+(settings.ramCleanOnPressure?('On '+(settings.pressureTrigger==='warning'?'Warning':'Critical')):'Off')+'</span>',
+    '<span class="clutter-chip">Inactive floor: '+settings.minInactiveGb+' GB</span>',
+    '<span class="clutter-chip">Battery mode: '+(settings.allowOnBattery?'Allow cleanup':'Skip cleanup')+'</span>',
+  ];
+  if(status.nextRunAt) chips.push('<span class="clutter-chip">Next run: '+escHtml(fmtTime(status.nextRunAt))+'</span>');
+  if(status.lastRunAt) chips.push('<span class="clutter-chip">Last run: '+escHtml(fmtTime(status.lastRunAt))+'</span>');
+  if(status.runCount) chips.push('<span class="clutter-chip">Runs: '+Number(status.runCount)+'</span>');
+  if(status.lastError) chips.push('<span class="clutter-chip" style="border-color:rgba(239,68,68,0.4);color:var(--danger)">Last error: '+escHtml(status.lastError)+'</span>');
+  if(status.lastResult && Array.isArray(status.lastResult.actions) && status.lastResult.actions.length){
+    var action=status.lastResult.actions[0];
+    if(action.type==='ram-clean'){
+      if(action.status==='done'){
+        chips.push('<span class="clutter-chip">Last RAM clean: +'+fmt(action.stabilizedFreeGainBytes||action.immediateFreeGainBytes||0)+'</span>');
+      }else if(action.status==='skipped'){
+        chips.push('<span class="clutter-chip">Last RAM action: skipped ('+escHtml(action.reason||'conditions')+')</span>');
+      }else if(action.status==='failed'){
+        chips.push('<span class="clutter-chip" style="border-color:rgba(239,68,68,0.4);color:var(--danger)">Last RAM action failed</span>');
+      }
+    }
+  }
+  metaEl.innerHTML=chips.join('');
+}
+async function loadAutoCareState(showNotice){
+  if(autoCareState.loading) return;
+  autoCareState.loading=true;
+  renderAutoCareState();
+  try{
+    var res=await bridge.getAutoCareState();
+    if(!res||!res.success){
+      notice('safety-notice','error','⚠️','Auto Care state failed',res&&res.error?res.error:'Unknown error');
+      return;
+    }
+    autoCareState.settings=normalizeAutoCareClientSettings(res.settings||defaultAutoCareSettings());
+    autoCareState.status=res.status||null;
+    applyAutoCareSettingsToForm(autoCareState.settings);
+    renderAutoCareState();
+    if(showNotice){
+      notice('safety-notice','success','✅','Auto Care updated','Scheduler state refreshed.');
+    }
+  }catch(e){
+    notice('safety-notice','error','⚠️','Auto Care state failed',e.message);
+  }finally{
+    autoCareState.loading=false;
+    renderAutoCareState();
+  }
+}
+async function saveAutoCareSettings(){
+  if(autoCareState.saving) return;
+  autoCareState.saving=true;
+  renderAutoCareState();
+  try{
+    var payload=readAutoCareFormSettings();
+    var res=await bridge.setAutoCareSettings(payload);
+    if(!res||!res.success){
+      notice('safety-notice','error','⚠️','Auto Care save failed',res&&res.error?res.error:'Unknown error');
+      return;
+    }
+    autoCareState.settings=normalizeAutoCareClientSettings(res.settings||payload);
+    autoCareState.status=res.status||autoCareState.status;
+    applyAutoCareSettingsToForm(autoCareState.settings);
+    notice('safety-notice','success','💾','Auto Care saved','Scheduler '+(autoCareState.settings.enabled?'enabled':'disabled')+' · every '+autoCareState.settings.intervalMinutes+' min.');
+  }catch(e){
+    notice('safety-notice','error','⚠️','Auto Care save failed',e.message);
+  }finally{
+    autoCareState.saving=false;
+    renderAutoCareState();
+  }
+}
+async function runAutoCareNow(){
+  if(autoCareState.running) return;
+  autoCareState.running=true;
+  renderAutoCareState();
+  try{
+    var res=await bridge.runAutoCareNow();
+    if(!res||!res.success){
+      notice('safety-notice','error','⚠️','Auto Care run failed',res&&res.result&&res.result.error?res.result.error:(res&&res.error?res.error:'Unknown error'));
+      return;
+    }
+    autoCareState.status=res.status||autoCareState.status;
+    var result=res.result||{};
+    if(result.skipped){
+      notice('safety-notice','info','ℹ️','Auto Care skipped',result.reason||'No actions were run.');
+    }else{
+      var action=(result.actions&&result.actions[0])||null;
+      if(action&&action.type==='ram-clean'&&action.status==='done'){
+        notice('safety-notice','success','✅','Auto Care complete','RAM clean finished. Stabilized gain: '+fmt(action.stabilizedFreeGainBytes||0)+'.');
+      }else if(action&&action.type==='ram-clean'&&action.status==='skipped'){
+        notice('safety-notice','info','ℹ️','Auto Care complete','RAM action skipped: '+(action.reason||'conditions not met')+'.');
+      }else if(action&&action.type==='ram-clean'&&action.status==='failed'){
+        notice('safety-notice','error','⚠️','Auto Care finished with warning',action.error||'RAM action failed.');
+      }else{
+        notice('safety-notice','success','✅','Auto Care complete','Scheduler cycle executed.');
+      }
+    }
+    loadSmartCare();
+    loadDashboard();
+  }catch(e){
+    notice('safety-notice','error','⚠️','Auto Care run failed',e.message);
+  }finally{
+    autoCareState.running=false;
+    renderAutoCareState();
+  }
+}
+async function loadSafety(showNotice){
+  if(safetyState.loading) return;
+  safetyState.loading=true;
+  var el=document.getElementById('safety-history');
+  if(el) el.innerHTML='<div class="skel" style="height:220px;border-radius:10px"></div>';
+  try{
+    var res=await bridge.getCleanupHistory({limit:120});
+    if(!res||!res.success){
+      notice('safety-notice','error','⚠️','Safety history failed',res&&res.error?res.error:'Unknown error');
+      return;
+    }
+    safetyState.entries=Array.isArray(res.entries)?res.entries:[];
+    renderSafetyStats();
+    renderSafetyHistory();
+    await loadAutoCareState(false);
+    if(showNotice){
+      notice('safety-notice','success','🧯','Safety history refreshed',safetyState.entries.length+' entr'+(safetyState.entries.length===1?'y':'ies')+' loaded.');
+    }
+  }catch(e){
+    notice('safety-notice','error','⚠️','Safety history failed',e.message);
+  }finally{
+    safetyState.loading=false;
+  }
+}
+async function restoreSafetyEntry(entryId){
+  if(!entryId) return;
+  if(!window.confirm('Restore all available items from this cleanup entry?')) return;
+  var res=await bridge.restoreCleanupEntry({entryId:entryId});
+  if(res&&res.success){
+    notice('safety-notice','success','✅','Restore complete','Restored '+(res.restoredCount||0)+' item'+((res.restoredCount||0)===1?'':'s')+'.');
+  }else{
+    notice('safety-notice','error','⚠️','Restore finished with warnings',(res&&res.error)?res.error:((res&&res.failedCount)?(res.failedCount+' items failed to restore.'):'Unknown error'));
+  }
+  loadSafety(false);
+  loadSmartCare();
+  loadDashboard();
+}
+async function clearSafetyHistory(){
+  if(!window.confirm('Clear cleanup history? Existing files in Trash will not be changed.')) return;
+  var res=await bridge.clearCleanupHistory();
+  if(res&&res.success){
+    safetyState.entries=[];
+    renderSafetyStats();
+    renderSafetyHistory();
+    notice('safety-notice','success','✅','Safety history cleared','History entries were removed.');
+  }else{
+    notice('safety-notice','error','⚠️','Could not clear history',res&&res.error?res.error:'Unknown error');
+  }
 }
 
 function escHtml(v){
@@ -2073,7 +2552,37 @@ async function trashSelectedDuplicates(){
   var btn=document.getElementById('clutter-trash-btn');
   if(btn){btn.disabled=true;btn.innerHTML='<span class="spin">⟳</span> Moving…';}
   try{
-    var res=await bridge.trashPaths(targets);
+    var preview=await bridge.trashPaths({
+      paths: targets,
+      module: 'clutter-finder',
+      action: 'Clutter Finder duplicate cleanup',
+      dryRun: true,
+      recordHistory: false,
+    });
+    if(!preview||(!preview.success && (preview.previewCount||0)<1)){
+      notice('clutter-notice','error','⚠️','Dry run failed',preview&&preview.error?preview.error:'Could not prepare cleanup preview.');
+      return;
+    }
+    var previewCount=preview.previewCount||0;
+    if(previewCount<1){
+      notice('clutter-notice','info','ℹ️','Nothing to clean','No selected files are available for cleanup.');
+      return;
+    }
+    var proceed=window.confirm(
+      'Dry run complete for duplicate cleanup.\n\n'+
+      'Candidates: '+previewCount+' item'+(previewCount===1?'':'s')+'\n'+
+      'Estimated space: '+fmt(preview.previewBytes||0)+'\n\n'+
+      'Move eligible items to Trash now?'
+    );
+    if(!proceed) return;
+
+    var res=await bridge.trashPaths({
+      paths: targets,
+      module: 'clutter-finder',
+      action: 'Clutter Finder duplicate cleanup',
+      dryRun: false,
+      recordHistory: true,
+    });
     var removed=new Set((res&&res.trashed)||[]);
     group.files=group.files.filter(function(f){return !removed.has(f.path);});
     if(group.files.length<2){
@@ -2089,9 +2598,11 @@ async function trashSelectedDuplicates(){
     }else{
       notice('clutter-notice','success','🗑️','Moved to Trash',targets.length+' duplicate file'+(targets.length===1?'':'s')+' moved safely.');
     }
+    loadSafety(false);
   }catch(e){
     notice('clutter-notice','error','⚠️','Trash operation failed',e.message);
   }finally{
+    renderClutterDetail();
     loadSmartCare();
   }
 }
@@ -2209,12 +2720,38 @@ async function cleanCloudProvider(providerId){
     notice('cloud-notice','info','ℹ️','Nothing to clean',provider.name+' has no stale cache files at the selected threshold.');
     return;
   }
-  var confirmed=window.confirm('Move stale cache files for '+provider.name+' to Trash?\\n\\nUp to '+staleCount+' file'+(staleCount===1?'':'s')+' will be moved.');
+  var preview=await bridge.cleanCloudProviderCache({
+    providerId:providerId,
+    staleDays:cloudState.staleDays,
+    maxFiles:cloudState.maxFiles,
+    dryRun:true,
+    recordHistory:false,
+  });
+  if(!preview||(!preview.success && (preview.previewCount||0)<1)){
+    notice('cloud-notice','error','⚠️','Dry run failed',preview&&preview.error?preview.error:'Could not prepare cleanup preview.');
+    return;
+  }
+  if((preview.previewCount||0)<1){
+    notice('cloud-notice','info','ℹ️','Nothing to clean',provider.name+' has no stale cache files available right now.');
+    return;
+  }
+  var confirmed=window.confirm(
+    'Dry run complete for '+provider.name+'.\\n\\n'+
+    'Candidates: '+(preview.previewCount||0)+' file'+((preview.previewCount||0)===1?'':'s')+'\\n'+
+    'Estimated space: '+fmt(preview.previewBytes||0)+'\\n\\n'+
+    'Move eligible files to Trash now?'
+  );
   if(!confirmed) return;
   cloudState.cleaningProvider=providerId;
   renderCloudProviders();
   try{
-    var res=await bridge.cleanCloudProviderCache({providerId:providerId,staleDays:cloudState.staleDays,maxFiles:cloudState.maxFiles});
+    var res=await bridge.cleanCloudProviderCache({
+      providerId:providerId,
+      staleDays:cloudState.staleDays,
+      maxFiles:cloudState.maxFiles,
+      dryRun:false,
+      recordHistory:true,
+    });
     var moved=(res&&res.trashedCount)||0;
     var movedBytes=(res&&res.trashedBytes)||0;
     var failed=(res&&Array.isArray(res.failed))?res.failed.length:0;
@@ -2224,6 +2761,7 @@ async function cleanCloudProvider(providerId){
       var fallback=(res&&res.error)?res.error:(moved+' moved, '+failed+' failed.');
       notice('cloud-notice','error','⚠️','Cleanup finished with warnings',provider.name+': '+fallback);
     }
+    loadSafety(false);
   }catch(e){
     notice('cloud-notice','error','⚠️','Cleanup failed',e.message);
   }finally{
@@ -2241,7 +2779,33 @@ async function cleanAllCloudCaches(){
     notice('cloud-notice','info','ℹ️','Nothing to clean','No stale cache files found across connected providers.');
     return;
   }
-  var confirmed=window.confirm('Move stale cache files for '+targets.length+' provider'+(targets.length===1?'':'s')+' to Trash?');
+  var previewRows=[];
+  var previewTotalCount=0;
+  var previewTotalBytes=0;
+  for(var pi=0;pi<targets.length;pi++){
+    var providerPreview=await bridge.cleanCloudProviderCache({
+      providerId:targets[pi].id,
+      staleDays:cloudState.staleDays,
+      maxFiles:cloudState.maxFiles,
+      dryRun:true,
+      recordHistory:false,
+    });
+    if(providerPreview && (providerPreview.success || (providerPreview.previewCount||0)>0)){
+      previewRows.push(targets[pi].name+': '+(providerPreview.previewCount||0)+' files · '+fmt(providerPreview.previewBytes||0));
+      previewTotalCount+=(providerPreview.previewCount||0);
+      previewTotalBytes+=(providerPreview.previewBytes||0);
+    }
+  }
+  if(previewTotalCount<1){
+    notice('cloud-notice','info','ℹ️','Nothing to clean','No stale cache files are currently available for cleanup.');
+    return;
+  }
+  var confirmed=window.confirm(
+    'Dry run complete for Cloud Trim.\\n\\n'+
+    previewRows.join('\\n')+'\\n\\n'+
+    'Total: '+previewTotalCount+' files · '+fmt(previewTotalBytes)+'\\n\\n'+
+    'Move these files to Trash now?'
+  );
   if(!confirmed) return;
   cloudState.cleaningAll=true;
   renderCloudActionState();
@@ -2249,7 +2813,13 @@ async function cleanAllCloudCaches(){
   try{
     for(var i=0;i<targets.length;i++){
       var p=targets[i];
-      var res=await bridge.cleanCloudProviderCache({providerId:p.id,staleDays:cloudState.staleDays,maxFiles:cloudState.maxFiles});
+      var res=await bridge.cleanCloudProviderCache({
+        providerId:p.id,
+        staleDays:cloudState.staleDays,
+        maxFiles:cloudState.maxFiles,
+        dryRun:false,
+        recordHistory:true,
+      });
       totalMoved+=(res&&res.trashedCount)||0;
       totalBytes+=(res&&res.trashedBytes)||0;
       totalFailed+=(res&&Array.isArray(res.failed))?res.failed.length:0;
@@ -2259,6 +2829,7 @@ async function cleanAllCloudCaches(){
     }else{
       notice('cloud-notice','error','⚠️','Cloud cleanup finished with warnings',totalMoved+' moved, '+totalFailed+' failed. Check provider rows and retry.');
     }
+    loadSafety(false);
   }catch(e){
     notice('cloud-notice','error','⚠️','Cloud cleanup failed',e.message);
   }finally{
@@ -2393,19 +2964,40 @@ async function trashSelectedLensItems(){
     notice('lens-notice','info','ℹ️','Nothing selected','Select files/folders from the list or map first.');
     return;
   }
-  var selectedBytes=selected.reduce(function(acc,item){ return acc+(item.size||0); },0);
-  var dirCount=selected.filter(function(item){ return item.type==='directory'; }).length;
-  var fileCount=selected.length-dirCount;
-  var confirmed=window.confirm(
-    'Move '+selected.length+' selected item'+(selected.length===1?'':'s')+' to Trash?\n\n'+
-    fileCount+' file'+(fileCount===1?'':'s')+', '+dirCount+' folder'+(dirCount===1?'':'s')+' · '+fmt(selectedBytes)
-  );
-  if(!confirmed) return;
 
   lensState.cleaning=true;
   renderLensToolbar();
   try{
-    var res=await bridge.trashPaths(selected.map(function(item){ return item.path; }));
+    var targets=selected.map(function(item){ return item.path; });
+    var preview=await bridge.trashPaths({
+      paths: targets,
+      module: 'space-atlas',
+      action: 'Space Atlas cleanup',
+      dryRun: true,
+      recordHistory: false,
+    });
+    if(!preview||(!preview.success && (preview.previewCount||0)<1)){
+      notice('lens-notice','error','⚠️','Dry run failed',preview&&preview.error?preview.error:'Could not prepare cleanup preview.');
+      return;
+    }
+    if((preview.previewCount||0)<1){
+      notice('lens-notice','info','ℹ️','Nothing to clean','No selected items are currently available.');
+      return;
+    }
+    var proceed=window.confirm(
+      'Dry run complete for selected Space Atlas items.\n\n'+
+      'Candidates: '+(preview.previewCount||0)+' item'+((preview.previewCount||0)===1?'':'s')+'\n'+
+      'Estimated space: '+fmt(preview.previewBytes||0)+'\n\n'+
+      'Move these items to Trash now?'
+    );
+    if(!proceed) return;
+    var res=await bridge.trashPaths({
+      paths: targets,
+      module: 'space-atlas',
+      action: 'Space Atlas cleanup',
+      dryRun: false,
+      recordHistory: true,
+    });
     var moved=(res&&res.trashed)?res.trashed.length:0;
     var movedBytes=(res&&res.trashedBytes)?res.trashedBytes:0;
     var failed=(res&&res.failed)?res.failed.length:0;
@@ -2417,6 +3009,7 @@ async function trashSelectedLensItems(){
     lensState.selectedPaths.clear();
     await loadLens(lensState.path||null);
     loadSmartCare();
+    loadSafety(false);
     loadDashboard();
   }catch(e){
     notice('lens-notice','error','⚠️','Space Lens cleanup failed',e.message);
